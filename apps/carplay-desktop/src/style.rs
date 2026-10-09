@@ -17,13 +17,13 @@ pub fn install(ctx: &egui::Context) {
     visuals.extreme_bg_color = Color32::from_rgb(14, 21, 24);
     visuals.faint_bg_color = SURFACE;
     visuals.selection.bg_fill = Color32::from_rgb(30, 89, 59);
-    visuals.selection.stroke = egui::Stroke::new(1., GREEN);
+    visuals.selection.stroke = egui::Stroke::new(1.0_f32, GREEN);
     visuals.widgets.inactive.bg_fill = Color32::from_rgb(34, 44, 48);
     visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(34, 44, 48);
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1., BORDER);
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, BORDER);
     visuals.widgets.hovered.bg_fill = Color32::from_rgb(46, 63, 58);
     visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(46, 63, 58);
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1., GREEN);
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, GREEN);
     visuals.widgets.active.bg_fill = Color32::from_rgb(35, 84, 57);
     for widget in [
         &mut visuals.widgets.inactive,
@@ -52,7 +52,7 @@ pub fn install(ctx: &egui::Context) {
 pub fn card() -> egui::Frame {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(egui::Stroke::new(1., BORDER))
+        .stroke(egui::Stroke::new(1.0_f32, BORDER))
         .corner_radius(16)
         .inner_margin(24)
 }

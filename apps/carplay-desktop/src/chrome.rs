@@ -55,7 +55,7 @@ pub fn title_bar(ctx: &egui::Context, logo: &egui::TextureHandle, subtitle: &str
                         Pos2::new(name.right() + 18.0, rect.center().y - 7.0),
                         Pos2::new(name.right() + 18.0, rect.center().y + 7.0),
                     ],
-                    Stroke::new(1.0, Color32::from_rgb(50, 63, 57)),
+                    Stroke::new(1.0_f32, Color32::from_rgb(50, 63, 57)),
                 );
                 painter.text(
                     Pos2::new(name.right() + 34.0, rect.center().y),
@@ -119,7 +119,7 @@ enum Control {
 
 impl Control {
     fn paint(&self, painter: &egui::Painter, center: Pos2, color: Color32, maximized: bool) {
-        let stroke = Stroke::new(1.2, color);
+        let stroke = Stroke::new(1.2_f32, color);
         match self {
             Self::Minimize => {
                 painter.line_segment(

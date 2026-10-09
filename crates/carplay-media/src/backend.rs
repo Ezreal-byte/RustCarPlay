@@ -217,6 +217,9 @@ impl Backend {
     }
 }
 
+// Rust 1.88 lacks the renamed AtomicUsize::try_update API. Keep the equivalent
+// fetch_update call for the declared MSRV, despite its Rust 1.99 deprecation.
+#[allow(deprecated)]
 fn reserve_bytes(counter: &AtomicUsize, bytes: usize) -> Result<(), String> {
     counter
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
