@@ -311,7 +311,7 @@ def validate_installed(root: Path, target: str, temporary: Path, launcher: Path 
         data = Path(environment["HOME"]) / "Library/Application Support/RustCarPlay"
         portable.verify_macos_dependencies(root, environment)
         if launcher.parent != root:
-            portable.verify_macos_dependencies(launcher.parent, environment)
+            portable.verify_macos_dependencies(launcher.parent, environment, minimum_binaries=1)
     else:
         data = Path(environment["XDG_DATA_HOME"]) / "rustcarplay"
     if not (data / ".local/logs/launcher.log").is_file():

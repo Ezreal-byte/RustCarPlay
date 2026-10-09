@@ -14,6 +14,25 @@ SPEC.loader.exec_module(installers)
 
 
 class InstallerPackagingTests(unittest.TestCase):
+    def test_macos_single_bundle_launcher_is_inspected_without_requiring_three_apps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "Contents/MacOS"
+            directory.mkdir(parents=True)
+            launcher = directory / "RustCarPlay"
+            launcher.write_bytes(next(iter(installers.portable.MACHO_MAGICS)) + b"fixture native code")
+            with patch.object(installers.portable, "run_captured", return_value=b"/usr/lib/libSystem.B.dylib") as inspect:
+                with self.assertRaisesRegex(installers.portable.VerificationError, "expected Mach-O"):
+                    installers.portable.verify_macos_dependencies(directory, {})
+                inspect.assert_not_called()
+                installers.portable.verify_macos_dependencies(directory, {}, minimum_binaries=1)
+                self.assertIn(str(launcher), inspect.call_args.args[0])
+            with patch.object(installers.portable, "run_captured", return_value=b"/Library/Frameworks/GStreamer.framework/Versions/1.0/lib/libgstreamer.dylib"):
+                with self.assertRaisesRegex(installers.portable.VerificationError, "build machine"):
+                    installers.portable.verify_macos_dependencies(directory, {}, minimum_binaries=1)
+            launcher.unlink()
+            with self.assertRaisesRegex(installers.portable.VerificationError, "expected Mach-O"):
+                installers.portable.verify_macos_dependencies(directory, {}, minimum_binaries=1)
+
     def test_macos_keeps_resources_out_of_the_code_only_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

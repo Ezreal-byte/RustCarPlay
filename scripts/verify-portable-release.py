@@ -309,14 +309,14 @@ def verify_windows_standalone_imports(executable: Path) -> None:
     raise VerificationError(f"{label} has too many import descriptors.")
 
 
-def verify_macos_dependencies(root: Path, environment: dict[str, str]) -> None:
+def verify_macos_dependencies(root: Path, environment: dict[str, str], *, minimum_binaries: int = 3) -> None:
     binaries = set()
     for candidate in [root / "RustCarPlay", *(root / "app").rglob("*"), *(root / "runtime").rglob("*")]:
         if candidate.is_file():
             with candidate.open("rb") as stream:
                 if stream.read(4) in MACHO_MAGICS:
                     binaries.add(inside(candidate, root))
-    if len(binaries) < 3:
+    if len(binaries) < minimum_binaries:
         raise VerificationError("The macOS archive does not contain all expected Mach-O applications.")
     paths = sorted(binaries)
     for start in range(0, len(paths), 32):
