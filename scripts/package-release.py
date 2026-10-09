@@ -1,4 +1,4 @@
-"""Build explicit runtime-free binary/source release assets (Python 3.12+)."""
+"""Build explicit portable binary/source release assets (Python 3.12+)."""
 from __future__ import annotations
 
 import argparse
@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
@@ -64,70 +65,80 @@ DEPENDENCIES.json records the dependency names, versions and license metadata.
 The included .cargo/config.toml selects that relative vendor directory, allowing
 cargo --offline --locked rebuilds after installing the documented native SDKs.
 
-GStreamer, USB native libraries, Apple software, device drivers, authentication
-keys and certificates are NOT included in this binary archive. Those separately
-installed components remain subject to their own licenses and requirements.
+Portable binary archives also contain native GStreamer libraries and an
+experimental accessory identity extracted from the pinned DiPlay preview APK.
+Those authentication data are not relicensed under this project's GPL license
+and are not included in the source archive. See resources/auth/provenance.json.
+runtime/NATIVE-MANIFEST.json and runtime/licenses identify native components.
+The same release supplies cerbero-1.28.7.tar.xz (the upstream complete native
+source bundle) and platform-specific native-source archives for USB/Ubuntu
+libraries. Apple software and device drivers are not bundled.
 See LICENSE and THIRD_PARTY_NOTICES.md for this application's source notices.
 """
 
 
 def runtime_notice(target: str) -> str:
-    common = """RUNTIME REQUIREMENTS / 运行依赖
+    common = """PORTABLE RELEASE / 离线便携包
 
-This package contains the GStreamer-enabled Rust desktop and CLI executables.
-It is not a self-contained installer. Native codecs and USB libraries are not
-bundled. Start from this directory so relative settings/auth paths are stable.
-No accessory identity/private key/certificate is included.
+Extract the whole archive to a writable directory. Keep its folders together.
+GStreamer playback/decoding libraries and the pinned DiPlay experimental
+accessory identity are included; no certificate directory or runtime download
+is needed for the application to start. Do not launch app/carplay-desktop
+directly: the root launcher selects the bundled libraries and identity.
 
-Windows x64 has limited real iPhone USB/wireless testing. Linux and macOS builds
-are compile/test artifacts, not a claim of full device interoperability. Check
-README.md and the release notes for the current platform feature boundaries.
+解压完整压缩包到可写目录，从根目录的 RustCarPlay 启动。
+无需手动配置媒体库或认证目录；个人设置和配对记录保存在 .local/。
+认证身份来自 DiPlay v0.2.15 公开预览 APK 的实验资源，并非为本项目签发。
+其持续有效性未经保证；详见 resources/auth/provenance.json 和第三方声明。
 
-GStreamer upstream installation: https://gstreamer.freedesktop.org/download/
-Required decoding plugins include H.264/HEVC, AAC, Opus, appsrc/appsink and
-audio/video conversion. Plugin availability depends on the installed runtime.
+System Bluetooth pairing, iPhone trust prompts, USB permissions/drivers,
+graphics/audio drivers and system services remain operating-system tasks.
+Packaging is not an interoperability guarantee on untested hardware.
 
 """
     if "windows" in target:
-        return common + """Windows 11 x64:
-Recommended preparation in PowerShell 7 from this extracted directory:
-  ./scripts/prepare-gstreamer.ps1
-  ./scripts/start-release-windows.ps1
-For the CLI: ./scripts/start-release-windows.ps1 -Cli -Arguments @('--help')
-Preparation downloads verified official GStreamer 1.28.7 x64 native archives
-into .local/gstreamer. No Python, Rust or compiler installation is needed.
-Alternatively install the official MSVC x86_64 GStreamer runtime, including
-libav codecs, put its bin on PATH, and launch the application executable.
-The Visual C++ 2015-2022 x64 runtime may also be required.
-USB additionally requires Apple Devices/iTunes and the separately prepared USB
-runtime/selected-device configuration described in docs/WINDOWS_USB_DRIVER.md.
-USB preparation helpers are already built in tools/; skip cargo build commands
-in source-development instructions. Run scripts/setup-usb-runtime.ps1 before
-scripts/start-windows-usb.ps1 (the latter requires administrator PowerShell 7).
-This ZIP does not install, replace or configure any driver automatically.
+        return common + """Windows 11 x64: double-click RustCarPlay.exe.
+Command line: RustCarPlay.exe --cli --help
+The launcher needs no PowerShell, Rust, Python or separately installed
+GStreamer. LAN still requires the PC/iPhone on the same Wi-Fi and Bluetooth
+pairing in system settings. USB user-mode libraries/helpers are bundled;
+Apple Mobile Device Service and a compatible USBMUX/NCM device/driver setup
+are still required. See docs/WINDOWS_USB_DRIVER.md for USB preparation.
+No bundled launcher installs drivers or requests administrator rights.
 """
     if "linux" in target:
-        return common + """Linux (built on Ubuntu 24.04, glibc 2.39 or newer):
-Install the matching-architecture distro GStreamer runtime and desktop libraries.
-Ubuntu example:
-  sudo apt install libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
-    gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-    gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-    libxkbcommon0 libwayland-client0 libx11-6 libvulkan1
-Bluetooth requires libbluetooth3. USB also requires libimobiledevice6, usbmuxd,
-appropriate device permissions,
-and the correct cdc_ncm interface; see docs/USB.md.
-Run ./carplay-desktop in your desktop session, or ./rustcarplay --help.
+        return common + """Linux x64/ARM64 (Ubuntu 24.04 or compatible, glibc >= 2.39):
+Run ./RustCarPlay in your desktop session, or ./RustCarPlay --cli --help.
+The desktop, glibc, graphics/audio drivers, BlueZ/NetworkManager and usbmuxd
+services/device permissions are provided by the operating system. Bundled
+libraries do not make this archive compatible with every Linux distribution.
+Real iPhone interoperability has not yet been validated on Linux.
 """
-    return common + """macOS (experimental platform build, built on macOS 15):
-Install the official GStreamer 1.28.7 universal runtime framework from upstream.
-The binary links to /Library/Frameworks/GStreamer.framework/Versions/1.0.
-Do not substitute a Homebrew build with different library install paths.
-This release is not notarized; no signed .app or DMG is provided.
-Launch ./carplay-desktop from Terminal, or ./rustcarplay --help.
-macOS Bluetooth/USB/hotspot native connection adapters remain limited; a built
-executable does not mean complete CarPlay receiver support on macOS.
+    return common + """macOS Intel/Apple Silicon (macOS 15 build preview):
+Run ./RustCarPlay, or ./RustCarPlay --cli --help.
+This build is not notarized. macOS native Bluetooth/USB/network connection
+adapters remain incomplete; bundled resources enable the UI/core preview,
+not a functional macOS CarPlay connection.
 """
+
+
+def prepare_auth(package: Path) -> None:
+    prepared = ROOT / ".local/release-auth"
+    subprocess.run([sys.executable, str(ROOT / "scripts/prepare-release-auth.py"),
+                    "--output", str(prepared)], cwd=ROOT, check=True)
+    destination = package / "resources/auth"
+    destination.mkdir(parents=True)
+    # The preparer has verified the complete APK and these exact entries. Never
+    # copy the developer's .local/auth directory or arbitrary files beside it.
+    for name in ("identity.pk8", "certificate.p7b", "provenance.json"):
+        shutil.copy2(prepared / name, destination / name)
+
+
+def bundle_runtime(package: Path, target: str, output: Path) -> None:
+    subprocess.run([sys.executable, str(ROOT / "scripts/bundle-native-runtime.py"),
+                    "--app-dir", str(package), "--target", target,
+                    "--source-output", str(output),
+                    "--cache-dir", str(ROOT / ".local/native-cache")], cwd=ROOT, check=True)
 
 
 def binary(current: str, target: str, output: Path, repository: str) -> None:
@@ -137,11 +148,14 @@ def binary(current: str, target: str, output: Path, repository: str) -> None:
     with tempfile.TemporaryDirectory(prefix="rustcarplay-package-") as temp:
         package = Path(temp) / name
         package.mkdir()
+        (package / "app").mkdir()
+        launcher = ROOT / "target" / target / "release" / ("RustCarPlay" + suffix)
+        shutil.copy2(launcher, package / launcher.name)
         for executable in ("carplay-desktop", "rustcarplay"):
             source = ROOT / "target" / target / "release" / (executable + suffix)
             if not source.is_file():
                 raise FileNotFoundError(source)
-            shutil.copy2(source, package / source.name)
+            shutil.copy2(source, package / "app" / source.name)
         if suffix:
             (package / "tools").mkdir()
             for helper in USB_HELPERS:
@@ -156,6 +170,8 @@ def binary(current: str, target: str, output: Path, repository: str) -> None:
         shutil.copytree(ROOT / "docs", package / "docs", ignore=shutil.ignore_patterns("*.png", "*.jpg", "*.gif"))
         write_text(package / "DEPENDENCIES-SOURCE.txt", source_notice(current, repository))
         write_text(package / "RUNTIME.txt", runtime_notice(target))
+        prepare_auth(package)
+        bundle_runtime(package, target, output)
         if suffix:
             destination = output / (name + ".zip")
             with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -206,6 +222,9 @@ def source(current: str, output: Path, repository: str) -> None:
 def checksums(current: str, output: Path) -> None:
     names = [f"RustCarPlay-{current}-{label}" + (".zip" if "windows" in label else ".tar.gz") for label in TARGETS.values()]
     names.append(f"RustCarPlay-{current}-source.tar.gz")
+    names.append("cerbero-1.28.7.tar.xz")
+    names.extend(f"RustCarPlay-{current}-native-source-{label}.tar.gz"
+                 for label in ("windows-x86_64", "linux-x86_64", "linux-aarch64"))
     actual = sorted(path.name for path in output.iterdir() if path.is_file() and path.name != "SHA256SUMS")
     if actual != sorted(names):
         raise ValueError(f"Release assets must match the complete target matrix: {actual!r}")

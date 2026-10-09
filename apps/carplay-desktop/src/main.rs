@@ -223,7 +223,9 @@ impl Desktop {
             hotspot_status: None,
             usb_device: field("usb_device"),
             startup_cancel: None,
-            auth_dir: ".local/auth".into(),
+            auth_dir: carplay_app::default_auth_dir()
+                .to_string_lossy()
+                .into_owned(),
             status: "准备连接".into(),
             logs: VecDeque::new(),
             diagnostics: None,

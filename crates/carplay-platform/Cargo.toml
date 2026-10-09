@@ -1,6 +1,6 @@
 [package]
 name = "carplay-platform"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Native host diagnostics and transport boundaries for RustCarplay"
 license = "GPL-3.0-only"

@@ -12,6 +12,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
+$portableUsb = Join-Path $workspace 'runtime/usb/bin'
+if (-not $env:RUSTCARPLAY_LIBIMOBILEDEVICE_DIR -and
+    (Test-Path -LiteralPath (Join-Path $portableUsb 'libimobiledevice-1.0.dll'))) {
+    $env:RUSTCARPLAY_LIBIMOBILEDEVICE_DIR = $portableUsb
+}
 $state = Join-Path $workspace '.local/windows-usb'
 # Published archives contain prebuilt helpers; source checkouts retain the
 # existing debug-example workflow. Driver preparation behavior is identical.

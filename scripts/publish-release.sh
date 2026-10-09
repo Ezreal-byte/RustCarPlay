@@ -19,8 +19,9 @@ if [[ -z "$existing" ]]; then
 fi
 gh release upload "$tag" dist/* --clobber
 count="$(gh release view "$tag" --json assets --jq '.assets | length')"
-if [[ "$count" != 7 ]]; then
-  echo "Draft has $count assets, expected 7; leaving it unpublished for inspection." >&2
+expected="$(($(wc -l < dist/SHA256SUMS) + 1))"
+if [[ "$count" != "$expected" ]]; then
+  echo "Draft has $count assets, expected $expected; leaving it unpublished for inspection." >&2
   exit 1
 fi
 gh release edit "$tag" --draft=false

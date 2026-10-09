@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 [package]
 name = "carplay-wireless"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Accessory-side wireless iAP2 bootstrap coordinator"

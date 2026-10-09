@@ -1,6 +1,6 @@
 [package]
 name = "carplay-media"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Bounded native GStreamer playback for CarPlay media"

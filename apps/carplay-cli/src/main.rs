@@ -39,7 +39,7 @@ enum Command {
     },
     /// Validate local MFi key/certificate consistency. Does not establish iPhone trust.
     AuthCheck {
-        #[arg(long, default_value = ".local/auth")]
+        #[arg(long, default_value_os_t = carplay_app::default_auth_dir())]
         assets: PathBuf,
     },
     /// Print the default configuration, or validate an existing JSON configuration.
@@ -66,7 +66,7 @@ enum Command {
 
         #[arg(long)]
         rfcomm_channel: Option<u8>,
-        #[arg(long, default_value = ".local/auth")]
+        #[arg(long, default_value_os_t = carplay_app::default_auth_dir())]
         auth_dir: PathBuf,
         #[arg(long, default_value = ".local/state")]
         state_dir: PathBuf,
@@ -79,7 +79,7 @@ enum Command {
         bind: SocketAddr,
         #[arg(long)]
         local_bluetooth: BluetoothAddress,
-        #[arg(long, default_value = ".local/auth")]
+        #[arg(long, default_value_os_t = carplay_app::default_auth_dir())]
         auth_dir: PathBuf,
         #[arg(long, default_value = ".local/state")]
         state_dir: PathBuf,

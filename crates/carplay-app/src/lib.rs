@@ -5,6 +5,7 @@ use anyhow::{Context, Result, ensure};
 use carplay_auth::LocalIdentity;
 use carplay_core::config::ReceiverConfig;
 use carplay_media::{GStreamerCaptureFactory, GStreamerMediaSink, RgbaFrame};
+
 use carplay_platform::bluetooth::{BluetoothAddress, ConnectOptions, RfcommStream};
 use carplay_protocol::{
     metadata,
@@ -25,6 +26,15 @@ use std::{
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
+
+/// The portable launcher selects its bundled accessory identity before startup.
+/// Source builds keep the existing local development directory.
+pub fn default_auth_dir() -> PathBuf {
+    std::env::var_os("RUSTCARPLAY_AUTH_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".local/auth"))
+}
 
 /// Connection choice is persisted; credentials are never part of the saved profile.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

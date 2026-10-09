@@ -13,7 +13,7 @@ SPEC.loader.exec_module(release)
 
 
 class ReleasePackagingTests(unittest.TestCase):
-    def test_windows_archive_contains_helpers_but_no_runtime_or_secrets(self):
+    def test_portable_archive_contains_only_prepared_resources_not_local_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             output = root / "dist"
@@ -21,7 +21,7 @@ class ReleasePackagingTests(unittest.TestCase):
             target = "x86_64-pc-windows-msvc"
             executable_dir = root / "target" / target / "release"
             (executable_dir / "examples").mkdir(parents=True)
-            for name in ("carplay-desktop.exe", "rustcarplay.exe", "must-not-ship.dll", "private.pdb"):
+            for name in ("RustCarPlay.exe", "carplay-desktop.exe", "rustcarplay.exe", "must-not-ship.dll", "private.pdb"):
                 (executable_dir / name).write_bytes(b"fixture")
             for name in release.USB_HELPERS:
                 (executable_dir / "examples" / (name + ".exe")).write_bytes(b"helper")
@@ -33,16 +33,37 @@ class ReleasePackagingTests(unittest.TestCase):
                 (root / name).write_text("notice", encoding="utf-8")
             (root / ".local/auth").mkdir(parents=True)
             (root / ".local/auth/identity.pk8").write_bytes(b"DO NOT DISTRIBUTE")
-            with patch.object(release, "ROOT", root):
+            def prepared_auth(package):
+                destination = package / "resources/auth"
+                destination.mkdir(parents=True)
+                (destination / "identity.pk8").write_bytes(b"AUTHORIZED FIXTURE")
+                (destination / "certificate.p7b").write_bytes(b"CERTIFICATE FIXTURE")
+                (destination / "provenance.json").write_text("{}", encoding="utf-8")
+
+            def prepared_runtime(package, target, output):
+                destination = package / "runtime/gstreamer/bin"
+                destination.mkdir(parents=True)
+                (destination / "gstreamer-1.0-0.dll").write_bytes(b"PINNED RUNTIME FIXTURE")
+
+            with patch.object(release, "ROOT", root), \
+                    patch.object(release, "prepare_auth", side_effect=prepared_auth), \
+                    patch.object(release, "bundle_runtime", side_effect=prepared_runtime):
                 release.binary("0.1.0", target, output, "owner/repository")
             with zipfile.ZipFile(next(output.iterdir())) as archive:
                 names = [str(Path(name).relative_to("RustCarPlay-0.1.0-windows-x86_64")).replace("\\", "/") for name in archive.namelist()]
                 self.assertIn("tools/usb_probe.exe", names)
+                self.assertIn("RustCarPlay.exe", names)
+                self.assertIn("app/carplay-desktop.exe", names)
+                self.assertIn("app/rustcarplay.exe", names)
                 self.assertIn("scripts/usb-runtime-packages.json", names)
                 self.assertIn("DEPENDENCIES-SOURCE.txt", names)
                 self.assertIn("RUNTIME.txt", names)
-                self.assertFalse(any(name.endswith((".dll", ".pdb", ".pk8")) for name in names))
+                self.assertIn("resources/auth/identity.pk8", names)
+                self.assertIn("runtime/gstreamer/bin/gstreamer-1.0-0.dll", names)
+                self.assertFalse(any(name.endswith(".pdb") or "must-not-ship" in name for name in names))
                 self.assertFalse(any(".local" in name for name in names))
+                self.assertEqual(archive.read("RustCarPlay-0.1.0-windows-x86_64/resources/auth/identity.pk8"),
+                                 b"AUTHORIZED FIXTURE")
 
     def test_missing_helper_prevents_incomplete_windows_archive(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -66,9 +87,14 @@ class ReleasePackagingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.checksums("0.1.0", root)
             (root / "RustCarPlay-0.1.0-source.tar.gz").write_bytes(b"source")
+            with self.assertRaises(ValueError):
+                release.checksums("0.1.0", root)
+            (root / "cerbero-1.28.7.tar.xz").write_bytes(b"native upstream source")
+            for label in ("windows-x86_64", "linux-x86_64", "linux-aarch64"):
+                (root / f"RustCarPlay-0.1.0-native-source-{label}.tar.gz").write_bytes(b"native source")
             release.checksums("0.1.0", root)
             lines = (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(lines), 6)
+            self.assertEqual(len(lines), 10)
             for line in lines:
                 digest, name = line.split("  ", 1)
                 self.assertEqual(digest, hashlib.sha256((root / name).read_bytes()).hexdigest())

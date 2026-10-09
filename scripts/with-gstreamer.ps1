@@ -5,7 +5,7 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Command)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $gst = Join-Path $root '.local/gstreamer'
-if (-not (Test-Path -LiteralPath (Join-Path $gst 'bin/gstreamer-1.0-0.dll'))) { throw 'Run scripts/prepare-gstreamer.ps1 and scripts/gstreamer-import-libs.py first.' }
+if (-not (Test-Path -LiteralPath (Join-Path $gst 'bin/gstreamer-1.0-0.dll'))) { throw 'Use RustCarPlay.exe in a portable release, or run scripts/prepare-gstreamer.ps1 for a source checkout.' }
 $env:PATH = (Join-Path $gst 'bin') + [IO.Path]::PathSeparator + $env:PATH
 $env:PKG_CONFIG_PATH = Join-Path $gst 'lib/pkgconfig'
 if ($IsWindows -and [string]::IsNullOrWhiteSpace($env:PKG_CONFIG)) {

@@ -1,0 +1,11 @@
+[package]
+name = "carplay-launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Dependency-free portable RustCarPlay application launcher"
+
+[[bin]]
+name = "RustCarPlay"
+path = "src/main.rs"

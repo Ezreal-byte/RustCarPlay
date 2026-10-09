@@ -5,6 +5,11 @@ on:
     branches: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      package:
+        description: Verify complete portable archives without publishing a release
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       package:
@@ -58,10 +63,11 @@ jobs:
             ~/.cargo/git
             target
           key: default-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: default-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Formatting
         run: cargo fmt --all --check
       - name: Release packaging tests
-        run: python -m unittest discover -s scripts -p test_package_release.py
+        run: python -m unittest discover -s scripts -p 'test_*.py'
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Workspace tests
@@ -110,6 +116,10 @@ jobs:
         run: |
           rustup show
           rustup target add "$BUILD_TARGET"
+      - name: Resolve portable preview version
+        if: inputs.package && !startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: python -c 'import os,tomllib; v=tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"]; open(os.environ["GITHUB_ENV"],"a").write("RELEASE_TAG=v"+v+"\n")'
       - name: Install Linux GStreamer SDK, codecs and desktop libraries
         if: runner.os == 'Linux'
         run: |
@@ -118,7 +128,13 @@ jobs:
             pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libgl1-mesa-dev
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libgl1-mesa-dev \
+            libimobiledevice6 libbluetooth3 gstreamer1.0-alsa libasound2-plugins
+      - name: Enable matching Ubuntu source repositories for portable bundles
+        if: inputs.package && runner.os == 'Linux'
+        run: |
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update
       - name: Prepare official Windows GStreamer SDK
         if: runner.os == 'Windows'
         shell: pwsh
@@ -135,6 +151,7 @@ jobs:
             ~/.cargo/git
             target
           key: native-gst1.28.7-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: native-gst1.28.7-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Clippy with native media
         shell: bash
         run: cargo clippy --workspace --all-features --all-targets --target "$BUILD_TARGET" --locked -- -D warnings
@@ -152,19 +169,55 @@ jobs:
         if: inputs.package
         shell: bash
         run: cargo build --release --locked --target "$BUILD_TARGET" -p carplay-desktop -p carplay-cli --features gstreamer
+      - name: Build standalone portable launcher
+        if: inputs.package
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --locked --target "$BUILD_TARGET" -p carplay-launcher
+          else
+            cargo build --release --locked --target "$BUILD_TARGET" -p carplay-launcher
+          fi
       - name: Build Windows USB preparation helpers
         if: inputs.package && runner.os == 'Windows'
         shell: bash
         run: cargo build --release --locked --target "$BUILD_TARGET" -p carplay-platform --example usb_probe --example usb_mode --example usb_runtime_check
-      - name: Package executables and notices without native runtimes
+      - name: Prepare bundled Windows USB user-mode libraries
+        if: inputs.package && runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/setup-usb-runtime.ps1
+      - name: Cache verified upstream native source archives
+        if: inputs.package
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .local/native-cache
+          key: portable-sources-v1-${{ runner.os }}-${{ runner.arch }}
+      - name: Package full offline binaries and corresponding native sources
         if: inputs.package
         shell: bash
         run: python scripts/package-release.py binary --tag "$RELEASE_TAG" --target "$BUILD_TARGET"
+      - name: Verify extracted portable archive without developer runtime paths
+        if: inputs.package
+        shell: bash
+        env:
+          ARCHIVE_LABEL: ${{ matrix.label }}
+        run: |
+          suffix=tar.gz
+          [[ "$RUNNER_OS" != Windows ]] || suffix=zip
+          python scripts/verify-portable-release.py --target "$BUILD_TARGET" --archive "dist/RustCarPlay-${RELEASE_TAG#v}-$ARCHIVE_LABEL.$suffix"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: inputs.package
         with:
           name: release-${{ matrix.label }}
           path: dist/RustCarPlay-*-${{ matrix.label }}.*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: inputs.package && runner.os == 'Windows'
+        with:
+          name: release-native-common-source
+          path: dist/cerbero-1.28.7.tar.xz
           if-no-files-found: error
           compression-level: 0
           retention-days: 7

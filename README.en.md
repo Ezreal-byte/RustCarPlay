@@ -4,7 +4,7 @@
 
 A Rust CarPlay receiver based on [DiPlay](https://github.com/shihabal3amri/DiPlay). Shared Rust code implements the protocols and sessions, native adapters connect to each operating system, **egui / wgpu** provides the desktop UI, and **GStreamer** handles media.
 
-**v0.1.0 is an early development preview.** Wireless and USB connections work with one tested iPhone on Windows. Full DiPlay feature parity, long-running stability and broader device compatibility remain unfinished.
+**v0.1.1 is a complete offline package preview.** It includes a launcher, media runtime and fixed experimental authentication material. Extract the archive and start its root launcher. Windows development builds have been tested with one iPhone over wireless and USB; CI and environment validation for these new packages are still in progress. Full DiPlay feature parity and long-running stability remain unfinished.
 
 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) · [Development guide](docs/DEVELOPMENT.md) · [Acceptance record](docs/ACCEPTANCE.md) · [Issues](https://github.com/Ezreal-byte/RustCarPlay/issues)
 
@@ -16,11 +16,11 @@ A Rust CarPlay receiver based on [DiPlay](https://github.com/shihabal3amri/DiPla
 
 ## Platform status
 
-| Platform | v0.1.0 status |
+| Platform | v0.1.1 scope and status |
 | --- | --- |
 | Windows 11 x64 | One iPhone tested: wireless/USB video, touch and audio; USB pause and reconnect also passed an initial user test |
-| Linux x64 / ARM64 | Native CI build targets; USB, BlueZ and NetworkManager backends implemented, with no physical-device acceptance yet |
-| macOS Intel / Apple Silicon | GUI/core build preview; native RFCOMM, USB and network configuration adapters are unfinished, so receiver connections are unavailable |
+| Linux x64 / ARM64 | Ubuntu 24.04 / glibc 2.39 baseline; USB, BlueZ and NetworkManager backends implemented, with no physical-device acceptance yet |
+| macOS Intel / Apple Silicon | macOS 15 GUI/core preview, not notarized; native RFCOMM, USB and network configuration adapters are unfinished, so receiver connections are unavailable |
 | Android | Shared-core port planned; Kotlin/JNI shell and platform adapters not implemented |
 | HarmonyOS / NEXT | ArkTS/native bridge planned; required APIs, permissions and device capabilities remain unverified |
 
@@ -38,11 +38,13 @@ A build target does not prove a successful release or working device connection.
 ## Getting started
 
 1. Choose your OS/architecture from [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) and verify `SHA256SUMS`.
-2. Prepare the **GStreamer runtime and codec plugins** using the [development guide](docs/DEVELOPMENT.md). Release archives do not bundle GStreamer, USB user-space DLLs or drivers. Included preparation scripts run only when explicitly invoked; they do not automatically request elevation or install drivers.
-3. Provide `identity.pk8` and `certificate.p7b` locally. These are an accessory private key and certificate, unrelated to your Apple ID password. **Neither source nor release archives include them.** A local key check does not prove iPhone authentication.
-4. For LAN, join the same Wi-Fi on the computer and iPhone, pair Bluetooth in system settings, then connect. For USB, read the [USB prerequisites](docs/USB.md); Windows also needs Apple Mobile Device Service, the USB user-space runtime and [reversible device configuration](docs/WINDOWS_USB_DRIVER.md).
+2. Extract the entire archive into a writable directory. Run **`RustCarPlay.exe`** on Windows or **`./RustCarPlay`** on Linux/macOS from the archive root. Ordinary launch needs no Rust, Python, PowerShell or GStreamer installation and no manually entered certificate directory. Personal settings and pairings are created locally and are not shipped.
+3. Start with LAN on Windows: join the same Wi-Fi on the computer and iPhone, pair Bluetooth in system settings, then connect. No in-app Wi-Fi password is required.
+4. **USB still has system prerequisites.** Windows needs Apple Mobile Device Service, trust/permissions and [device configuration](docs/WINDOWS_USB_DRIVER.md). Preparation scripts still depend on PowerShell 7 and relevant SDK tools; USB is not fully plug-and-play. Linux still needs a system desktop, graphics/audio drivers, BlueZ, NetworkManager, usbmuxd and appropriate permissions. The archive does not install these OS components.
 
-The desktop executable is `carplay-desktop`; the CLI is `rustcarplay` (with `.exe` on Windows). Build, launch, troubleshooting and recovery instructions are in the [development guide](docs/DEVELOPMENT.md), with an English quickstart.
+The bundled experimental identity comes from the fixed **DiPlay v0.2.15 preview APK**, attributed upstream to **public Carlinkit firmware**. It is not newly issued and is not covered by the source-code GPL license. Public download availability does not establish redistribution permission; distribution suitability and continued acceptance by future iOS releases remain unresolved. The archive includes `resources/auth/provenance.json`; private keys are excluded from Git and source archives. See [third-party notices](docs/THIRD_PARTY_NOTICES.md).
+
+Use `RustCarPlay --cli` for the command line (`RustCarPlay.exe --cli` on Windows). Package layout, source builds, troubleshooting and recovery are documented in the [development guide](docs/DEVELOPMENT.md). See the [v0.1.1 notes](docs/releases/v0.1.1.md) for release changes.
 
 ## Development
 
@@ -58,4 +60,4 @@ Install Rust stable, the platform toolchain and desktop system libraries. Media-
 
 The fixed reference is DiPlay commit [`9e244d958afe6b8fd79ade49769ce25a944f397b`](https://github.com/shihabal3amri/DiPlay/tree/9e244d958afe6b8fd79ade49769ce25a944f397b), whose receiver originates from [xcertplay](https://github.com/shilapi/xcertplay). This project ports protocol behavior to Rust and retains source attribution; it does not wrap an Android APK for desktop use.
 
-Project code is [GPL-3.0-only](LICENSE). External runtimes, upstream assets and dependencies retain their own licenses; see [third-party notices](docs/THIRD_PARTY_NOTICES.md). The CarPlay name and original icon belong to Apple and are outside the project's GPL source license. This project does not imply Apple certification or endorsement.
+Project code is [GPL-3.0-only](LICENSE). Bundled runtimes, upstream assets and dependencies retain their own licenses. Matching Rust and native dependency source attachments accompany the release; see [third-party notices](docs/THIRD_PARTY_NOTICES.md). The CarPlay name and original icon belong to Apple and are outside the project's GPL source license. This project does not imply Apple certification or endorsement.

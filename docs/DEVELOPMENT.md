@@ -2,11 +2,32 @@
 
 [中文首页](../README.md) · [English overview](../README.en.md) · [English quickstart](#english-quickstart)
 
-本文保留完整开发与连接说明，命令默认在仓库根目录执行。v0.1.0 发布包提供程序与准备脚本，不包含 GStreamer、USB 用户态 DLL、驱动、配件认证身份或本地配对记录；源码归档和 `SHA256SUMS` 以 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) 为准。准备脚本需要主动执行，系统 USB 配置是单独的管理员操作。
+本文保留完整开发与连接说明，开发命令默认在仓库根目录执行。v0.1.1 改为包含媒体运行时和实验认证材料的离线包；此前 v0.1.0 的外部运行时方案见[历史发布说明](releases/v0.1.0.md)。产物、对应源码和 `SHA256SUMS` 以 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) 为准。本轮离线包 CI 与环境验证仍在进行，不能把既有开发环境真机结果等同于新包已在干净系统验证。
 
 基于 [DiPlay](https://github.com/shihabal3amri/DiPlay) `9e244d958afe6b8fd79ade49769ce25a944f397b` 的 Rust 跨平台接收端移植。协议核心不依赖 Android，桌面使用 egui/wgpu 和 GStreamer。
 
 **当前是正在进行真机验证的开发原型，尚未完成 DiPlay 的全部功能，也没有通过 Windows/Linux 完整 CarPlay 验收。** 编译、协议测试、localhost 加密会话测试和合成媒体解码，不等同于 iPhone 互操作验证。详见 [验收与缺口](ACCEPTANCE.md)。如需对照，可将固定版本的上游源码另行检出至被忽略的 `DiPlay/` 目录；公开仓库与本 Cargo workspace 不包含该副本。
+
+## 使用 v0.1.1 离线包
+
+下载对应系统和架构的完整压缩包，核对摘要后解压到可写目录。Windows 双击根目录 `RustCarPlay.exe`，Linux/macOS 执行 `./RustCarPlay`。普通启动无需安装 Rust、Python、PowerShell 或 GStreamer，也无需手填认证目录。启动器为子进程设置包内库、插件和认证路径，不修改系统 PATH，不自动提权或安装驱动。
+
+```text
+RustCarPlay(.exe)          桌面入口；加 --cli 启动命令行
+app/                      carplay-desktop 与 rustcarplay
+runtime/gstreamer/        媒体库、插件和插件扫描器
+runtime/usb/              Windows USB 用户态库
+resources/auth/           固定实验身份和 provenance.json
+.local/                   首次运行生成的设置、配对、缓存和日志
+```
+
+不要只复制根入口或 `app/`。`.local/` 是各用户的个人状态，发布包不含开发者的设置、手机配对或日志。Windows 的 USB DLL 位于 `runtime/usb/bin/`；Linux 的 libimobiledevice、BlueZ 用户态库随依赖闭包置于 `runtime/gstreamer/lib/`，系统服务与驱动仍由操作系统提供。原生组件版本、对应源码和许可索引见包内 `runtime/NATIVE-MANIFEST.json` 与 `runtime/licenses/`。
+
+Windows 建议先用局域网：电脑和 iPhone 加入同一 Wi-Fi，在系统设置完成蓝牙配对。USB 需要 Apple Mobile Device Service、信任/权限和设备配置；管理员准备脚本仍需要 PowerShell 7、相关 SDK 工具及可能的手动重插。这些前置条件并未因打包 DLL 而消失，见 [USB 说明](USB.md) 与[驱动配置和恢复](WINDOWS_USB_DRIVER.md)。
+
+Linux x64/ARM64 以 Ubuntu 24.04、glibc 2.39 为基线，不保证旧发行版可运行。系统桌面、图形/音频驱动、BlueZ、NetworkManager、usbmuxd 及设备权限不捆绑；Linux 真机仍待验证。macOS 15 Intel/Apple Silicon 包仅供 GUI/核心预览，未公证，原生连接适配未实现。
+
+包内认证材料的来源与限制见下文[认证文件](#认证文件)。命令行也应经根入口运行，例如 `RustCarPlay.exe --cli doctor` 或 `./RustCarPlay --cli doctor`，以获得相同运行时环境。以下 SDK、Python 和 Cargo 安装步骤用于源码开发。
 
 ## 已实现的代码路径
 
@@ -56,7 +77,7 @@ python ./scripts/gstreamer-import-libs.py
 
 “USB”模式不需要蓝牙和 Wi-Fi 参数。插入数据线后刷新并选择 USB iPhone。Linux 按 [USB 前置条件](USB.md) 配置系统组件。Windows 需要 Apple Mobile Device Service、本地 libimobiledevice 运行时，以及所选手机的 NCM 复合配置；软件使用 Apple 的 USBMUX 服务和 Windows UsbNcm 驱动。普通连接不会安装驱动或回退到无线。
 
-Windows USB 的用户态依赖在普通 PowerShell 7 中准备：
+从源码开发时，Windows USB 的用户态依赖在普通 PowerShell 7 中准备；v0.1.1 离线包已携带这些用户态 DLL，普通运行无需重复执行：
 
 ```powershell
 ./scripts/setup-usb-runtime.ps1
@@ -72,13 +93,23 @@ Windows USB 的用户态依赖在普通 PowerShell 7 中准备：
 
 ## 认证文件
 
-`identity.pk8` 是配件认证私钥，`certificate.p7b` 是配套证书，二者与 Apple ID 密码无关。`LocalIdentity` 按 DiPlay 的 P-256 MFi v3 路径加载它们；发布包和 Git 中不携带这些文件。
+`identity.pk8` 是配件认证私钥，`certificate.p7b` 是配套证书，二者与 Apple ID 密码无关。`LocalIdentity` 按 DiPlay 的 P-256 MFi v3 路径加载它们。v0.1.1 二进制包按本次预览分发选择携带固定实验身份，根启动器默认使用 `resources/auth/`；Git 和 Rust 源码归档不包含身份私钥，也不包含任何用户的配对记录。需要自有身份时，可设置 `RUSTCARPLAY_AUTH_DIR` 指向本地目录。
 
-当前本地实验从用户指定的 DiPlay 官方 v0.2.15 APK 的 `assets/offline-mfi/` 读取这两个文件，保存在忽略目录 `.local/auth/`。原 APK SHA-256 为 `4bf45f16d6b1ab0a61462b831014081f07240f5596c90ca6bf38fb43f9890511`。上游将其标为实验认证数据，不能把公开 APK 中存在这些数据理解为它们受 GPL 许可或适合随新项目分发。身份一致性检查不验证 iPhone 信任。
+来源链为 **Carlinkit C2Air / Allwinner V821 公开固件 → DiPlay 官方 v0.2.15 预览 APK 的 `assets/offline-mfi/` → 本预览包**，不是新签发身份。固定 APK SHA-256 为 `4bf45f16d6b1ab0a61462b831014081f07240f5596c90ca6bf38fb43f9890511`。公开下载和提取不构成再分发许可，也不使其适用源码 GPL；上游声明的分发适用性与持续有效性尚未确定，未来 iOS 可能不再接受。随包 `provenance.json` 记录固定来源、APK 摘要和实验限制，不记录私钥摘要。身份一致性检查不验证 iPhone 信任。详见[第三方声明](THIRD_PARTY_NOTICES.md)。
+
+维护者准备本轮二进制包时使用 Python 3.12 和固定来源脚本：
+
+```sh
+python scripts/prepare-release-auth.py
+# 可复用已下载的固定 APK；不接受自定义来源或校验摘要
+python scripts/prepare-release-auth.py --apk .local/downloads/DiPlay-0.2.15.apk
+```
+
+脚本核对整个 APK 后，仅提取两个受限条目到忽略目录 `.local/release-auth/` 并生成来源记录；默认下载到忽略的缓存目录。相同输出可重复使用，不同内容不会被覆盖。源码开发也可使用自己提供的身份；源代码包本身不能凭空生成 iPhone 接受的证书。
 
 ## Ubuntu 24.04
 
-参见 [CI](../.github/workflows/ci.yml) 中的实际 apt 包列表。至少需要 GStreamer core/base 开发包、good/bad/ugly/libav 插件、BlueZ 系统库和桌面 X11/Wayland 开发库：
+以下为源码开发步骤；离线包已包含所选 GStreamer 运行时和依赖闭包。参见 [CI](../.github/workflows/ci.yml) 中的实际 apt 包列表。源码构建至少需要 GStreamer core/base 开发包、good/bad/ugly/libav 插件、BlueZ 系统库和桌面 X11/Wayland 开发库：
 
 ```sh
 cargo test --workspace --locked
@@ -105,9 +136,13 @@ GStreamer feature 的编译/测试需要上述 native 环境；不能用 `DOCS_R
 
 ## English quickstart
 
-Run the commands from the repository root. This project needs Rust stable and the native toolchain for the selected platform. Release binaries also require external GStreamer runtime libraries and codec plugins; source builds additionally need development headers and pkg-config metadata. Release archives do not include accessory identity files, Apple software, USB DLLs or drivers. See the platform sections above for the complete connection and recovery procedure.
+For the v0.1.1 offline package, extract the entire archive into a writable directory and run its root `RustCarPlay.exe` (Windows) or `./RustCarPlay` (Linux/macOS). Ordinary launch requires no Rust, Python, PowerShell or GStreamer installation and no manual certificate setup. The launcher selects `app/carplay-desktop`, bundled media libraries/plugins, and `resources/auth`; `--cli` selects `app/rustcarplay` instead. It changes the child process environment only. Settings, pairing records, caches and logs are generated under `.local/` and are not shipped. New package CI/environment validation is still in progress.
 
-### Windows
+Windows USB still needs Apple's mobile-device service, phone trust, permissions and device configuration. Preparation scripts currently require PowerShell 7 and relevant SDK tools; bundled user-space DLLs do not provide system drivers or make USB fully plug-and-play. Linux packages target Ubuntu 24.04 / glibc 2.39 and include the selected media dependency closure, but not a desktop, graphics/audio drivers, BlueZ, NetworkManager or usbmuxd services and permissions. macOS 15 packages are non-notarized GUI/core previews without native connection adapters.
+
+The commands below are for **building from source** and run from the repository root. Source builds need Rust stable, native toolchains, GStreamer development headers and pkg-config metadata. See the Chinese platform sections above for the full connection and recovery procedure and [v0.1.1 notes](releases/v0.1.1.md) for the package/source asset list.
+
+### Building from source on Windows
 
 Install Visual Studio C++ Build Tools, PowerShell 7, a working Python 3, and pkg-config. The workspace scripts obtain pinned official GStreamer files, verify their hashes and prepare a local build/runtime environment. They do not install a system driver or change the global PATH.
 
@@ -118,13 +153,13 @@ python ./scripts/gstreamer-import-libs.py
 ./scripts/with-gstreamer.ps1 -Command @('./target/debug/carplay-desktop.exe')
 ```
 
-For USB, first install Apple's mobile-device support and validate trust with the unlocked phone. Prepare the local user-space library with `./scripts/setup-usb-runtime.ps1`, then follow [Windows USB configuration and recovery](WINDOWS_USB_DRIVER.md). Driver preparation is separate from ordinary connection and may require elevation and a physical cable replug. Do not replace a driver or select a configuration merely from another phone's example values.
+For USB, first install Apple's mobile-device support and validate trust with the unlocked phone. For a source build, prepare the local user-space library with `./scripts/setup-usb-runtime.ps1`; v0.1.1 binary archives already include those DLLs. Follow [Windows USB configuration and recovery](WINDOWS_USB_DRIVER.md) for the separate system preparation, which may require elevation and a physical cable replug. Do not replace a driver or select a configuration merely from another phone's example values.
 
 ### Linux and macOS build previews
 
 Linux x64 and ARM64 use native runners and distribution libraries; check the package list in [CI](../.github/workflows/ci.yml). USB requires libimobiledevice/usbmuxd and the correct CDC-NCM interface; wireless requires BlueZ and the appropriate system network configuration. Linux physical-device operation remains unverified.
 
-macOS Intel and Apple Silicon are GUI/core build previews. The build uses the official GStreamer universal runtime and development packages. Make their tools and pkg-config files available to Cargo using the environment from the native CI job. RFCOMM, USB and system network adapters are not implemented for macOS; compiling or opening the interface does not enable a receiver connection.
+macOS 15 Intel and Apple Silicon are GUI/core build previews; the binary package is not notarized. Source builds use the official GStreamer universal runtime and development packages. Make their tools and pkg-config files available to Cargo using the environment from the native CI job. RFCOMM, USB and system network adapters are not implemented for macOS; compiling or opening the interface does not enable a receiver connection.
 
 After native dependencies are installed:
 
@@ -139,7 +174,9 @@ Synthetic tests decode into appsinks; they do not prove physical audio playback 
 
 ### Identity and connection modes
 
-Provide `identity.pk8` and `certificate.p7b` in a private local directory and select it in the app. These are accessory authentication files, not Apple ID credentials. They are not distributed with this project. `rustcarplay auth-check --assets <directory>` validates local consistency, not iPhone trust. Keep credentials, pairings and local diagnostic/state directories out of commits and release archives.
+The v0.1.1 binary package includes the fixed `identity.pk8` and `certificate.p7b` from the DiPlay v0.2.15 preview APK, attributed upstream to public Carlinkit C2Air / Allwinner V821 firmware. These are experimental accessory authentication files, not Apple ID credentials or newly issued certificates. Their distribution suitability and continued iOS acceptance remain unresolved. Public availability and extraction do not establish redistribution permission or apply the source-code GPL to them. `resources/auth/provenance.json` records the source and limitations. Git and Rust source archives exclude the private key; all user pairings and local state remain excluded from releases.
+
+The root launcher defaults to `resources/auth`; set `RUSTCARPLAY_AUTH_DIR` to use your own identity. A source build needs a separately supplied identity or the explicitly selected preview preparation process above. `RustCarPlay --cli auth-check --assets <directory>` validates local consistency, not iPhone trust (append `.exe` to the launcher on Windows).
 
 - **LAN:** join the same Wi-Fi and pair Classic Bluetooth in the OS first. The app uses the current system Wi-Fi profile without an in-app password field. Its credentials are read for the iAP2 handshake only and are not saved in settings or logs.
 - **Hotspot:** Windows Mobile Hotspot and Linux NetworkManager adapters are implemented; actual phone connection still needs acceptance. System configuration is reused unless customized in this mode.
