@@ -25,7 +25,7 @@ class InstallerPackagingTests(unittest.TestCase):
                     installers.portable.verify_macos_dependencies(directory, {})
                 inspect.assert_not_called()
                 installers.portable.verify_macos_dependencies(directory, {}, minimum_binaries=1)
-                self.assertIn(str(launcher), inspect.call_args.args[0])
+                self.assertIn(str(launcher.resolve()), inspect.call_args.args[0])
             with patch.object(installers.portable, "run_captured", return_value=b"/Library/Frameworks/GStreamer.framework/Versions/1.0/lib/libgstreamer.dylib"):
                 with self.assertRaisesRegex(installers.portable.VerificationError, "build machine"):
                     installers.portable.verify_macos_dependencies(directory, {}, minimum_binaries=1)
