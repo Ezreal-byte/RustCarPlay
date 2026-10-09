@@ -4,7 +4,7 @@
 
 A Rust CarPlay receiver based on [DiPlay](https://github.com/shihabal3amri/DiPlay). Shared Rust code implements the protocols and sessions, native adapters connect to each operating system, **egui / wgpu** provides the desktop UI, and **GStreamer** handles media.
 
-**The current source version is v0.1.4; desktop artifacts include Windows Setup, macOS DMG and Ubuntu DEB previews.** Check Releases for published versions: a commit or passing CI does not create a release. Media runtimes and fixed experimental authentication material are included; portable archives remain available. Windows development builds have been tested with one iPhone over wireless and USB. Full DiPlay feature parity and long-running stability remain unfinished.
+**The current source version is v0.1.5; desktop artifacts include Windows Setup, macOS DMG and Ubuntu DEB previews.** Check Releases for published versions: a commit or passing CI does not create a release. Media runtimes and fixed experimental authentication material are included; portable archives remain available. Windows development builds have been tested with one iPhone over wireless and USB. Full DiPlay feature parity and long-running stability remain unfinished.
 
 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) · [Development guide](docs/DEVELOPMENT.md) · [Acceptance record](docs/ACCEPTANCE.md) · [Issues](https://github.com/Ezreal-byte/RustCarPlay/issues)
 
@@ -45,13 +45,13 @@ Download the installer matching your OS and architecture from [Releases](https:/
 
 | System | Download and installation |
 | --- | --- |
-| Windows 11 x64 | Run `RustCarPlay-0.1.1-windows-x86_64-setup.exe`, then open RustCarPlay from Start; application installation is per-user and needs no administrator privileges |
-| macOS 15 | Choose `RustCarPlay-0.1.1-macos-aarch64.dmg` (Apple Silicon) or `RustCarPlay-0.1.1-macos-x86_64.dmg` (Intel), then drag the app to Applications; GUI/core preview only, with no CarPlay connection support |
-| Ubuntu 24.04 | Run `sudo apt install ./rustcarplay_0.1.1_amd64.deb`; use `rustcarplay_0.1.1_arm64.deb` on ARM64, then launch from the application menu; device connections remain unverified |
+| Windows 11 x64 | Run `RustCarPlay-0.1.5-windows-x86_64-setup.exe`, then open RustCarPlay from Start; application installation is per-user and needs no administrator privileges |
+| macOS 15 | Choose `RustCarPlay-0.1.5-macos-aarch64.dmg` (Apple Silicon) or `RustCarPlay-0.1.5-macos-x86_64.dmg` (Intel), then drag the app to Applications; GUI/core preview only, with no CarPlay connection support |
+| Ubuntu 24.04 | Run `sudo apt install ./rustcarplay_0.1.5_amd64.deb`; use `rustcarplay_0.1.5_arm64.deb` on ARM64, then launch from the application menu; device connections remain unverified |
 
 Ordinary launch needs no separately installed development tools or GStreamer, and no manual certificate path. Installed applications keep personal settings, pairings and logs in user data directories; uninstalling preserves that data. See the [exact locations](docs/DEVELOPMENT.md#installation-and-personal-data). For portable use, extract the whole ZIP/TAR into a writable directory and run its root `RustCarPlay.exe` or `./RustCarPlay`.
 
-Start with LAN on Windows: join the same Wi-Fi on the computer and iPhone, pair Bluetooth in system settings, then connect without an in-app Wi-Fi password. USB additionally needs Apple Mobile Device Service, trust/permissions and [device configuration](docs/WINDOWS_USB_DRIVER.md). In v0.1.4, Prepare Windows USB reports actual stages and saves replug checkpoints; PowerShell 5.1 and 7 are supported. Preparation requests administrator privileges, which Windows may approve silently. Standard packages include signature verification; reusing some legacy drivers still requires SDK verification tools. Linux connections require system BlueZ, NetworkManager, usbmuxd and suitable permissions.
+Start with LAN on Windows: join the same Wi-Fi on the computer and iPhone, pair Bluetooth in system settings, then connect without an in-app Wi-Fi password. USB additionally needs Apple Mobile Device Service, trust/permissions and [device configuration](docs/WINDOWS_USB_DRIVER.md). In v0.1.5, Prepare Windows USB reports actual stages and saves replug checkpoints; PowerShell 5.1 and 7 are supported. Preparation requests administrator privileges, which Windows may approve silently. Standard packages include signature verification; reusing some legacy drivers still requires SDK verification tools. Linux connections require system BlueZ, NetworkManager, usbmuxd and suitable permissions.
 
 The bundled experimental identity comes from the fixed **DiPlay v0.2.15 preview APK**, attributed upstream to **public Carlinkit firmware**. It is not newly issued and is not covered by the source-code GPL license. Public download availability does not establish redistribution permission; distribution suitability and continued acceptance by future iOS releases remain unresolved. The archive includes `resources/auth/provenance.json`; private keys are excluded from Git and source archives. See [third-party notices](docs/THIRD_PARTY_NOTICES.md).
 

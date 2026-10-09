@@ -10,7 +10,7 @@ run installers, invoke pacman/hooks, install drivers, change registry or system
 PATH, or access an iPhone. Apple Mobile Device Service is a separate prerequisite.
 #>
 [CmdletBinding()]
-param()
+param([string]$Python)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (-not $IsWindows -or -not [Environment]::Is64BitProcess) {
@@ -24,7 +24,7 @@ $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 | Convert
 if ($manifest.schema -ne 1 -or $manifest.platform -ne 'windows-x86_64-ucrt') {
     throw 'Unsupported USB runtime manifest.'
 }
-$tar = (Get-Command tar.exe -ErrorAction Stop).Source
+$tar = if ($Python) { $null } else { (Get-Command tar.exe -ErrorAction Stop).Source }
 New-Item -ItemType Directory -Path $destination,$download -Force | Out-Null
 $destinationPrefix = [IO.Path]::GetFullPath($destination) + [IO.Path]::DirectorySeparatorChar
 $stage = Join-Path $destination ('staging/' + [Guid]::NewGuid().ToString('N'))
@@ -65,6 +65,12 @@ try {
         if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $package.sha256) {
             throw ('Cached archive digest mismatch: ' + $package.name)
         }
+        $packageStage = Assert-WithinRuntime (Join-Path $stage $package.name)
+        New-Item -ItemType Directory -Path $packageStage -Force | Out-Null
+        if ($Python) {
+            & $Python (Join-Path $PSScriptRoot 'extract-usb-runtime.py') $archive $packageStage --sha256 $package.sha256
+            if ($LASTEXITCODE -ne 0) { throw ('Cannot extract pinned archive: ' + $package.name) }
+        } else {
         $entries = @(& $tar -tf $archive)
         if ($LASTEXITCODE -ne 0) { throw ('Cannot list archive: ' + $package.name) }
         $selected = @($entries | Where-Object {
@@ -76,11 +82,10 @@ try {
         foreach ($entry in $selected) {
             if ($entry -match '(^|/)\.\.(/|$)|[\\:]|^[/-]') { throw 'Unsafe archive path.' }
         }
-        $packageStage = Assert-WithinRuntime (Join-Path $stage $package.name)
-        New-Item -ItemType Directory -Path $packageStage -Force | Out-Null
         if ($selected.Count -gt 0) {
             & $tar -xf $archive -C $packageStage -- @selected
             if ($LASTEXITCODE -ne 0) { throw ('Cannot extract archive: ' + $package.name) }
+        }
         }
         foreach ($item in Get-ChildItem -LiteralPath $packageStage -Recurse -Force) {
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Archive links are not supported.' }

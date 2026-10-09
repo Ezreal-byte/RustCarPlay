@@ -25,7 +25,7 @@ TARGETS = {
 USB_HELPERS = ("usb_probe", "usb_mode", "usb_runtime_check", "usb_driver_verify")
 WINDOWS_SCRIPTS = (
     "start-release-windows.ps1", "prepare-gstreamer.ps1", "with-gstreamer.ps1",
-    "setup-usb-runtime.ps1", "usb-runtime-packages.json", "start-windows-usb.ps1",
+    "setup-usb-runtime.ps1", "extract-usb-runtime.py", "native_runtime_sources.py", "usb-runtime-packages.json", "start-windows-usb.ps1",
     "windows-usb-config.ps1", "windows-usb-filter.ps1", "windows-usb-paths.ps1",
 )
 

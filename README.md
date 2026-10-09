@@ -4,7 +4,7 @@
 
 基于 [DiPlay](https://github.com/shihabal3amri/DiPlay) 的 Rust CarPlay 接收端。以共享 Rust 协议实现连接与媒体会话，通过平台原生适配器接入设备，桌面界面使用 **egui / wgpu**，媒体后端使用 **GStreamer**。
 
-**当前源码版本为 v0.1.4；桌面产物包括 Windows Setup、macOS DMG 和 Ubuntu DEB 预览。** 已发布版本以 Releases 为准，提交代码或 CI 通过不代表创建了新 Release。媒体运行时和固定的实验认证材料随包提供，另保留便携包。已有 Windows 开发版本与一台 iPhone 的无线/USB 实测；尚未完成 DiPlay 功能对齐和长期稳定性验收。
+**当前源码版本为 v0.1.5；桌面产物包括 Windows Setup、macOS DMG 和 Ubuntu DEB 预览。** 已发布版本以 Releases 为准，提交代码或 CI 通过不代表创建了新 Release。媒体运行时和固定的实验认证材料随包提供，另保留便携包。已有 Windows 开发版本与一台 iPhone 的无线/USB 实测；尚未完成 DiPlay 功能对齐和长期稳定性验收。
 
 [下载 / Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) · [开发与运行](docs/DEVELOPMENT.md) · [验收记录](docs/ACCEPTANCE.md) · [问题反馈](https://github.com/Ezreal-byte/RustCarPlay/issues)
 
@@ -45,13 +45,13 @@
 
 | 系统 | 下载与安装 |
 | --- | --- |
-| Windows 11 x64 | 运行 `RustCarPlay-0.1.1-windows-x86_64-setup.exe`，安装后从开始菜单打开；应用按当前用户安装，无需管理员权限 |
-| macOS 15 | 选择 `RustCarPlay-0.1.1-macos-aarch64.dmg`（Apple Silicon）或 `RustCarPlay-0.1.1-macos-x86_64.dmg`（Intel），将应用拖入 Applications；目前仅供界面/核心预览，不能连接 CarPlay |
-| Ubuntu 24.04 | 使用 `sudo apt install ./rustcarplay_0.1.1_amd64.deb`；ARM64 将文件名换为 `rustcarplay_0.1.1_arm64.deb`，安装后从应用菜单打开；真机连接仍待验证 |
+| Windows 11 x64 | 运行 `RustCarPlay-0.1.5-windows-x86_64-setup.exe`，安装后从开始菜单打开；应用按当前用户安装，无需管理员权限 |
+| macOS 15 | 选择 `RustCarPlay-0.1.5-macos-aarch64.dmg`（Apple Silicon）或 `RustCarPlay-0.1.5-macos-x86_64.dmg`（Intel），将应用拖入 Applications；目前仅供界面/核心预览，不能连接 CarPlay |
+| Ubuntu 24.04 | 使用 `sudo apt install ./rustcarplay_0.1.5_amd64.deb`；ARM64 将文件名换为 `rustcarplay_0.1.5_arm64.deb`，安装后从应用菜单打开；真机连接仍待验证 |
 
 普通启动无需另装开发工具或 GStreamer，也无需手填认证目录。安装版将个人设置、配对和日志保存到用户数据目录，卸载保留这些数据；[具体路径](docs/DEVELOPMENT.md#安装与个人数据)。需要便携使用时，完整解压 ZIP/TAR 到可写目录，启动根目录的 `RustCarPlay.exe` 或 `./RustCarPlay`。
 
-Windows 建议先选局域网模式：电脑与 iPhone 加入同一 Wi-Fi，在系统中完成蓝牙配对后连接，应用内无需输入 Wi-Fi 密码。USB 另需 Apple Mobile Device Service、信任/权限与[设备配置](docs/WINDOWS_USB_DRIVER.md)。v0.1.4 的“准备 Windows USB”入口显示执行阶段并保存拔插续接进度，支持 PowerShell 5.1／7；驱动准备需管理员权限，系统可能自动批准而不显示弹窗。标准包自带驱动签名校验工具，复用部分旧驱动仍需 SDK 校验。Linux 连接需要系统 BlueZ、NetworkManager、usbmuxd 和相应权限。
+Windows 建议先选局域网模式：电脑与 iPhone 加入同一 Wi-Fi，在系统中完成蓝牙配对后连接，应用内无需输入 Wi-Fi 密码。USB 另需 Apple Mobile Device Service、信任/权限与[设备配置](docs/WINDOWS_USB_DRIVER.md)。v0.1.5 的“准备 Windows USB”入口显示执行阶段并保存拔插续接进度，支持 PowerShell 5.1／7；驱动准备需管理员权限，系统可能自动批准而不显示弹窗。标准包自带驱动签名校验工具，复用部分旧驱动仍需 SDK 校验。Linux 连接需要系统 BlueZ、NetworkManager、usbmuxd 和相应权限。
 
 离线包的实验身份取自固定 **DiPlay v0.2.15 预览 APK**，上游声明来源为 **Carlinkit 公开固件**。它不是新签发身份，不适用项目源码的 GPL 许可；公开可下载不等于获得再分发许可，分发适用性与未来 iOS 接受情况仍未确定。来源记录随包放在 `resources/auth/provenance.json`，私钥不进入 Git 或源码包。详见[第三方声明](docs/THIRD_PARTY_NOTICES.md)。
 

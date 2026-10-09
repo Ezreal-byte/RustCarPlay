@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-app"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "carplay-auth",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-auth"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "aes",
  "chacha20poly1305",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "carplay-app",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "carplay-auth",
  "plist",
@@ -456,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-desktop"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "carplay-app",
  "carplay-auth",
@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-discovery"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "mdns-sd",
  "socket2",
@@ -481,14 +481,14 @@ dependencies = [
 
 [[package]]
 name = "carplay-launcher"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "carplay-media"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "carplay-core",
  "gstreamer",
@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-platform"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "libc",
  "libloading",
@@ -518,14 +518,14 @@ dependencies = [
 
 [[package]]
 name = "carplay-protocol"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "carplay-receiver"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "carplay-auth",
@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-wireless"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "carplay-auth",
  "carplay-platform",
