@@ -4,7 +4,7 @@
 
 A Rust CarPlay receiver based on [DiPlay](https://github.com/shihabal3amri/DiPlay). Shared Rust code implements the protocols and sessions, native adapters connect to each operating system, **egui / wgpu** provides the desktop UI, and **GStreamer** handles media.
 
-**v0.1.1 provides desktop installer previews: Windows Setup, macOS DMG and Ubuntu DEB.** Media runtimes and fixed experimental authentication material are included; portable archives remain available. Windows development builds have been tested with one iPhone over wireless and USB; CI and installation validation are still in progress. Full DiPlay feature parity and long-running stability remain unfinished.
+**v0.1.1 provides desktop installer previews: Windows Setup, macOS DMG and Ubuntu DEB.** Media runtimes and fixed experimental authentication material are included; portable archives remain available. Windows development builds have been tested with one iPhone over wireless and USB; the release workflow checks extracted application startup and installer layout. Full DiPlay feature parity and long-running stability remain unfinished.
 
 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) · [Development guide](docs/DEVELOPMENT.md) · [Acceptance record](docs/ACCEPTANCE.md) · [Issues](https://github.com/Ezreal-byte/RustCarPlay/issues)
 

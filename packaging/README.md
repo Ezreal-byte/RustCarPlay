@@ -24,7 +24,7 @@ menu entry and `/usr/bin/rustcarplay`. DEB metadata declares the required system
 services and desktop libraries. Verification extracts into a temporary directory;
 it does not invoke dpkg installation or start services.
 
-Every installed layout places `INSTALLATION.json` beside the standalone launcher.
+Every installed layout places `INSTALLATION.json` in the payload root. On macOS, only the signed launcher is in `Contents/MacOS`; the payload is in `Contents/Resources/payload`. Other platforms keep the payload beside the launcher.
 The launcher reads bundled resources from the installation and writes state to
 the platform's user data directory. Uninstallers never delete that personal data.
 Matching source and license attachments are the same as for the portable build.

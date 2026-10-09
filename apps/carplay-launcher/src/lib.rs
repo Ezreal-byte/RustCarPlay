@@ -61,15 +61,22 @@ impl LaunchPlan {
         platform: Platform,
         inherited: &BTreeMap<OsString, OsString>,
     ) -> Result<Self, String> {
-        let root = launcher_executable
-            .parent()
-            .ok_or("Cannot locate the application directory.")?;
+        let root = package_root(launcher_executable, platform)?;
+        let installed = installed_mode(&root)?;
+        if platform == Platform::MacOs
+            && launcher_executable.parent() != Some(root.as_path())
+            && !installed
+        {
+            return Err(
+                "The macOS application is missing Resources/payload/INSTALLATION.json.".into(),
+            );
+        }
         Self::build(
             launcher_executable,
             arguments,
             platform,
             inherited,
-            installed_mode(root)?,
+            installed,
         )
     }
 
@@ -92,13 +99,7 @@ impl LaunchPlan {
         } else {
             inherited
         };
-        if !launcher_executable.is_absolute() {
-            return Err("The launcher executable path must be absolute.".into());
-        }
-        let root = launcher_executable
-            .parent()
-            .ok_or("Cannot locate the application directory.")?
-            .to_path_buf();
+        let root = package_root(launcher_executable, platform)?;
         let working_directory = if installed {
             user_data_directory(platform, inherited)?
         } else {
@@ -246,6 +247,26 @@ impl LaunchPlan {
     }
 }
 
+fn package_root(launcher_executable: &Path, platform: Platform) -> Result<PathBuf, String> {
+    if !launcher_executable.is_absolute() {
+        return Err("The launcher executable path must be absolute.".into());
+    }
+    let parent = launcher_executable
+        .parent()
+        .ok_or("Cannot locate the application directory.")?;
+    if platform == Platform::MacOs
+        && parent.file_name() == Some(OsStr::new("MacOS"))
+        && let Some(contents) = parent.parent()
+        && contents.file_name() == Some(OsStr::new("Contents"))
+        && contents.parent().and_then(Path::extension) == Some(OsStr::new("app"))
+    {
+        // Keep only the signed launcher in the app's executable directory.
+        // The installer preserves the portable payload layout under Resources.
+        return Ok(contents.join("Resources/payload"));
+    }
+    Ok(parent.to_path_buf())
+}
+
 fn installed_mode(root: &Path) -> Result<bool, String> {
     let marker = root.join("INSTALLATION.json");
     let metadata = match std::fs::metadata(&marker) {
@@ -388,6 +409,38 @@ mod tests {
             plan.root.join("runtime/usb-filter")
         );
         assert!(!plan.environment.contains_key(OsStr::new("LD_LIBRARY_PATH")));
+    }
+
+    #[test]
+    fn installed_windows_preserves_explicit_auth_and_usb_overrides() {
+        let user = std::env::temp_dir().join("carplay user overrides");
+        let inherited = BTreeMap::from([
+            (OsString::from("LocalAppData"), user.into_os_string()),
+            (
+                OsString::from("rustcarplay_auth_dir"),
+                OsString::from("custom-auth"),
+            ),
+            (
+                OsString::from("rustcarplay_libimobiledevice_dir"),
+                OsString::from("custom-usbmux"),
+            ),
+            (
+                OsString::from("rustcarplay_usb_filter_dir"),
+                OsString::from("custom-filter"),
+            ),
+        ]);
+        let original = inherited.clone();
+        let plan =
+            LaunchPlan::build(&executable(), vec![], Platform::Windows, &inherited, true).unwrap();
+        for (key, value) in [
+            ("RUSTCARPLAY_AUTH_DIR", "custom-auth"),
+            ("RUSTCARPLAY_LIBIMOBILEDEVICE_DIR", "custom-usbmux"),
+            ("RUSTCARPLAY_USB_FILTER_DIR", "custom-filter"),
+        ] {
+            assert_eq!(plan.environment[OsStr::new(key)], value);
+        }
+        assert_eq!(inherited, original);
+        assert_eq!(plan.root, executable().parent().unwrap());
     }
 
     #[test]
@@ -586,5 +639,95 @@ mod tests {
         ] {
             assert!(validate_installation_marker(invalid).is_err());
         }
+    }
+
+    #[test]
+    fn macos_application_reads_marker_and_resources_from_payload() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temporary =
+            std::env::temp_dir().join(format!("carplay launcher {} {unique}", std::process::id()));
+        std::fs::create_dir(&temporary).unwrap();
+        let bundle = temporary.join("Renamed 中文 application.app");
+        let contents = bundle.join("Contents");
+        let resources = contents.join("Resources");
+        let payload = resources.join("payload");
+        let launcher = contents.join("MacOS/RustCarPlay");
+        std::fs::create_dir_all(&payload).unwrap();
+        let marker = payload.join("INSTALLATION.json");
+        std::fs::write(
+            &marker,
+            br#"{"schema":1,"mode":"installed","product":"RustCarPlay"}"#,
+        )
+        .unwrap();
+        let user = temporary.join("user home");
+        let inherited = BTreeMap::from([(OsString::from("HOME"), user.clone().into_os_string())]);
+        let result = LaunchPlan::new(
+            &launcher,
+            vec!["--cli".into(), "--version".into()],
+            Platform::MacOs,
+            &inherited,
+        );
+        // Remove only the files/directories this test created, without recursively
+        // deleting any caller-controlled location.
+        std::fs::remove_file(marker).unwrap();
+        for directory in [&payload, &resources, &contents, &bundle, &temporary] {
+            std::fs::remove_dir(directory).unwrap();
+        }
+        let plan = result.unwrap();
+        assert_eq!(plan.root, payload);
+        assert_eq!(plan.application, payload.join("app/rustcarplay"));
+        assert_eq!(plan.arguments, ["--version"]);
+        assert_eq!(
+            plan.environment[OsStr::new("RUSTCARPLAY_AUTH_DIR")],
+            payload.join("resources/auth")
+        );
+        assert_eq!(
+            plan.plugin_directory,
+            payload.join("runtime/gstreamer/lib/gstreamer-1.0")
+        );
+        assert_eq!(
+            plan.scanner_candidates[0],
+            payload.join("runtime/gstreamer/libexec/gstreamer-1.0/gst-plugin-scanner")
+        );
+        assert_eq!(
+            plan.working_directory,
+            user.join("Library/Application Support/RustCarPlay")
+        );
+        assert_eq!(
+            plan.registry_directory,
+            plan.working_directory.join(".local/gstreamer")
+        );
+    }
+
+    #[test]
+    fn only_standard_macos_app_layout_redirects_the_package_root() {
+        let temporary = std::env::temp_dir().join("carplay package location tests");
+        for relative in [
+            "portable/RustCarPlay",
+            "portable/Contents/MacOS/RustCarPlay",
+            "Named.app/RustCarPlay",
+            "Named.app/Other/MacOS/RustCarPlay",
+        ] {
+            let launcher = temporary.join(relative);
+            assert_eq!(
+                package_root(&launcher, Platform::MacOs).unwrap(),
+                launcher.parent().unwrap()
+            );
+        }
+        let launcher = temporary.join("Named.app/Contents/MacOS/RustCarPlay");
+        for platform in [Platform::Windows, Platform::Linux] {
+            assert_eq!(
+                package_root(&launcher, platform).unwrap(),
+                launcher.parent().unwrap()
+            );
+        }
+        assert!(
+            LaunchPlan::new(&launcher, vec![], Platform::MacOs, &BTreeMap::new())
+                .unwrap_err()
+                .contains("INSTALLATION.json")
+        );
     }
 }

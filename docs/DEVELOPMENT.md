@@ -2,7 +2,7 @@
 
 [中文首页](../README.md) · [English overview](../README.en.md) · [English quickstart](#english-quickstart)
 
-本文保留完整开发与连接说明，开发命令默认在仓库根目录执行。v0.1.1 提供包含媒体运行时和实验认证材料的桌面安装包，并保留便携包；此前 v0.1.0 的外部运行时方案见[历史发布说明](releases/v0.1.0.md)。产物、对应源码和 `SHA256SUMS` 以 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) 为准。本轮 CI 与安装环境验证仍在进行，不能把既有开发环境真机结果等同于新包已在干净系统验证。
+本文保留完整开发与连接说明，开发命令默认在仓库根目录执行。v0.1.1 提供包含媒体运行时和实验认证材料的桌面安装包，并保留便携包；此前 v0.1.0 的外部运行时方案见[历史发布说明](releases/v0.1.0.md)。产物、对应源码和 `SHA256SUMS` 以 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) 为准。发布流程检查解压启动和安装布局；既有开发环境真机结果不等于新包已在干净系统完成真机验收。
 
 基于 [DiPlay](https://github.com/shihabal3amri/DiPlay) `9e244d958afe6b8fd79ade49769ce25a944f397b` 的 Rust 跨平台接收端移植。协议核心不依赖 Android，桌面使用 egui/wgpu 和 GStreamer。
 
@@ -30,7 +30,7 @@ INSTALLATION.json         仅安装版包含，启用用户数据目录
 
 ### 安装与个人数据
 
-Windows Setup 按当前用户安装到 `%LOCALAPPDATA%\Programs\RustCarPlay`，应用安装不要求管理员权限。macOS 应用放在 `/Applications/RustCarPlay.app`；Linux DEB 将程序安装到 `/opt/rustcarplay`。安装版通过根入口旁的 `INSTALLATION.json` 选择用户数据目录，应用原有相对 `.local/` 布局保持不变：
+Windows Setup 按当前用户安装到 `%LOCALAPPDATA%\Programs\RustCarPlay`，应用安装不要求管理员权限。macOS 应用放在 `/Applications/RustCarPlay.app`；Linux DEB 将程序安装到 `/opt/rustcarplay`。安装版通过资源根的 `INSTALLATION.json` 选择用户数据目录；macOS 的资源根为 `.app/Contents/Resources/payload`，其他平台与启动器同目录。应用原有相对 `.local/` 布局保持不变：
 
 | 平台 | 设置、配对、日志与缓存路径 |
 | --- | --- |
@@ -157,13 +157,13 @@ GStreamer feature 的编译/测试需要上述 native 环境；不能用 `DOCS_R
 
 ## English quickstart
 
-Use the v0.1.1 Windows Setup, macOS DMG or Ubuntu 24.04 DEB matching your CPU architecture. Windows installs for the current user without administrator privileges; on macOS, drag the app to Applications; on Ubuntu, run `sudo apt install ./rustcarplay_0.1.1_amd64.deb` (use `arm64` for ARM64). Launch from the system application menu. macOS remains a GUI/core preview with no CarPlay connection support. Installer CI/environment validation is still in progress.
+Use the v0.1.1 Windows Setup, macOS DMG or Ubuntu 24.04 DEB matching your CPU architecture. Windows installs for the current user without administrator privileges; on macOS, drag the app to Applications; on Ubuntu, run `sudo apt install ./rustcarplay_0.1.1_amd64.deb` (use `arm64` for ARM64). Launch from the system application menu. macOS remains a GUI/core preview with no CarPlay connection support. The release workflow checks extracted startup and installer layout; these checks do not establish physical-device compatibility on a clean host.
 
 Ordinary launch requires no Rust, Python, PowerShell or GStreamer installation and no manual certificate setup. The launcher selects `app/carplay-desktop`, bundled media libraries/plugins, and `resources/auth`; `--cli` selects `app/rustcarplay` instead. It changes the child process environment only. Portable ZIP/TAR archives remain available: extract the whole archive into a writable directory and run its root `RustCarPlay.exe` or `./RustCarPlay`.
 
 ### Installation and personal data
 
-Windows installs to `%LOCALAPPDATA%\Programs\RustCarPlay`, Linux to `/opt/rustcarplay`, and macOS to `/Applications/RustCarPlay.app`. The installed launcher detects `INSTALLATION.json` beside it, reads bundled resources by absolute path, and runs the application from a writable user data directory. Existing relative `.local/` settings, pairings, logs and caches reside at:
+Windows installs to `%LOCALAPPDATA%\Programs\RustCarPlay`, Linux to `/opt/rustcarplay`, and macOS to `/Applications/RustCarPlay.app`. The installed launcher detects `INSTALLATION.json` in its payload root (`.app/Contents/Resources/payload` on macOS, beside the launcher elsewhere), reads bundled resources by absolute path, and runs the application from a writable user data directory. Existing relative `.local/` settings, pairings, logs and caches reside at:
 
 - Windows: `%LOCALAPPDATA%\RustCarPlay\.local\`.
 - Linux: `$XDG_DATA_HOME/rustcarplay/.local/`, or `~/.local/share/rustcarplay/.local/` when no absolute `XDG_DATA_HOME` is set.

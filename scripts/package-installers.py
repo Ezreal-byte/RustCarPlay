@@ -94,14 +94,22 @@ def png_icon_container(source: Path, destination: Path) -> None:
 
 
 def find_iscc() -> Path:
-    configured = os.environ.get("ISCC_PATH") or shutil.which("ISCC.exe")
-    candidates = [Path(configured)] if configured else []
-    candidates += [Path(os.environ.get(name, fallback)) / "Inno Setup 6/ISCC.exe"
-                   for name, fallback in (("ProgramFiles(x86)", "C:/Program Files (x86)"),
-                                          ("ProgramFiles", "C:/Program Files"))]
-    compiler = next((p for p in candidates if p.is_file()), None)
+    configured = os.environ.get("ISCC_PATH")
+    if configured:
+        candidates = [Path(configured)]
+    else:
+        # Chocolatey's PATH entry can be a forwarding executable, without the
+        # compiler's adjacent license and resources. Prefer the actual install.
+        candidates = [Path(os.environ.get(name, fallback)) / "Inno Setup 6/ISCC.exe"
+                      for name, fallback in (("ProgramFiles(x86)", "C:/Program Files (x86)"),
+                                             ("ProgramFiles", "C:/Program Files"))]
+        if on_path := shutil.which("ISCC.exe"):
+            candidates.append(Path(on_path))
+    compiler = next((p for p in candidates if p.is_file() and (p.parent / "License.txt").is_file()), None)
     if compiler is None:
-        raise RuntimeError("Inno Setup 6 ISCC.exe is required; set ISCC_PATH when installed elsewhere")
+        raise RuntimeError("Inno Setup 6 ISCC.exe and its adjacent License.txt are required; "
+                           "set ISCC_PATH to the installed compiler, not a PATH shim. Checked: "
+                           + ", ".join(str(path) for path in candidates))
     return compiler
 
 
@@ -150,11 +158,19 @@ def windows_setup(package: Path, temporary: Path, version: str, output: Path) ->
 def macos_app(package: Path, destination: Path, version: str) -> Path:
     app = destination / "RustCarPlay.app"
     contents = app / "Contents"
-    payload = contents / "MacOS"
-    shutil.copytree(package, payload)
-    normalize_public_payload(payload)
     resources = contents / "Resources"
-    resources.mkdir()
+    resources.mkdir(parents=True)
+    payload = resources / "payload"
+    shutil.copytree(package, payload)
+    # Contents/MacOS is a code-only location. The offline bundle also contains
+    # licenses/settings/scripts, so keep that tree sealed under Resources and
+    # preserve the already-relocated app/runtime paths inside it.
+    executables = contents / "MacOS"
+    executables.mkdir()
+    launcher = executables / "RustCarPlay"
+    (payload / "RustCarPlay").replace(launcher)
+    launcher.chmod(0o755)
+    normalize_public_payload(payload)
     iconset = destination / "RustCarPlay.iconset"
     iconset.mkdir()
     for logical in (16, 32, 128, 256, 512):
@@ -266,7 +282,7 @@ def build(archive: Path, target: str, output: Path) -> Path:
     return result
 
 
-def validate_installed(root: Path, target: str, temporary: Path) -> Path:
+def validate_installed(root: Path, target: str, temporary: Path, launcher: Path | None = None) -> Path:
     marker = portable.read_json(root / "INSTALLATION.json")
     if (marker.get("schema"), marker.get("mode"), marker.get("product"), marker.get("target")) != (1, "installed", "RustCarPlay", target):
         raise RuntimeError("Installer marker does not match installed application")
@@ -276,7 +292,8 @@ def validate_installed(root: Path, target: str, temporary: Path) -> Path:
     portable.validate_runtime_manifest(root, target)
     system = TARGETS[target][1]
     environment = portable.clean_environment(temporary, system)
-    launcher = root / ("RustCarPlay.exe" if system == "Windows" else "RustCarPlay")
+    if launcher is None:
+        launcher = root / ("RustCarPlay.exe" if system == "Windows" else "RustCarPlay")
     working = temporary / "unrelated working directory"
     working.mkdir(exist_ok=True)
     output = portable.run_captured([str(launcher), "--cli", "--version"], working, environment, "Installed CLI version")
@@ -286,13 +303,15 @@ def validate_installed(root: Path, target: str, temporary: Path) -> Path:
     if b"key_matches_certificate: true" not in output or b"iphone_trust_verified: false" not in output:
         raise RuntimeError("Installed local identity check failed")
     del output
-    if (root / ".local").exists():
+    if (root / ".local").exists() or (launcher.parent / ".local").exists():
         raise RuntimeError("Installed application wrote state into its installation directory")
     if system == "Windows":
         data = Path(environment["LOCALAPPDATA"]) / "RustCarPlay"
     elif system == "Darwin":
         data = Path(environment["HOME"]) / "Library/Application Support/RustCarPlay"
         portable.verify_macos_dependencies(root, environment)
+        if launcher.parent != root:
+            portable.verify_macos_dependencies(launcher.parent, environment)
     else:
         data = Path(environment["XDG_DATA_HOME"]) / "rustcarplay"
     if not (data / ".local/logs/launcher.log").is_file():
@@ -372,7 +391,11 @@ def verify(archive: Path, target: str) -> None:
                 if info.get("CFBundleExecutable") != "RustCarPlay" or info.get("CFBundlePackageType") != "APPL":
                     raise RuntimeError("DMG application metadata is invalid")
                 run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app])
-                validate_installed(app / "Contents/MacOS", target, temporary)
+                executables = app / "Contents/MacOS"
+                if {path.name for path in executables.iterdir()} != {"RustCarPlay"}:
+                    raise RuntimeError("DMG executable directory contains unexpected resources")
+                validate_installed(app / "Contents/Resources/payload", target, temporary,
+                                   executables / "RustCarPlay")
             finally:
                 run(["/usr/bin/hdiutil", "detach", mount], timeout=120)
         else:

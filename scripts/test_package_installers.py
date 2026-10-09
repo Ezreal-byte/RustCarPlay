@@ -14,6 +14,62 @@ SPEC.loader.exec_module(installers)
 
 
 class InstallerPackagingTests(unittest.TestCase):
+    def test_macos_keeps_resources_out_of_the_code_only_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "portable"
+            package.mkdir()
+            for name, data in (("RustCarPlay", b"fixture launcher"), ("LICENSE", b"fixture license"),
+                               ("app/carplay-desktop", b"fixture desktop"),
+                               ("runtime/gstreamer/lib/codec.dylib", b"fixture signed codec"),
+                               ("resources/auth/identity.pk8", b"public release fixture")):
+                path = package / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            installers.installed_marker(package, "0.1.1", "aarch64-apple-darwin")
+            destination = root / "image"
+            destination.mkdir()
+            commands = []
+            with patch.object(installers, "run", side_effect=lambda command, **kwargs: commands.append(command)), \
+                 patch.object(installers.portable, "validate_runtime_manifest") as manifest:
+                app = installers.macos_app(package, destination, "0.1.1")
+            executables = app / "Contents/MacOS"
+            payload = app / "Contents/Resources/payload"
+            self.assertEqual({path.name for path in executables.iterdir()}, {"RustCarPlay"})
+            self.assertEqual((executables / "RustCarPlay").read_bytes(), b"fixture launcher")
+            self.assertFalse((payload / "RustCarPlay").exists())
+            self.assertEqual((payload / "LICENSE").read_bytes(), b"fixture license")
+            self.assertEqual((payload / "runtime/gstreamer/lib/codec.dylib").read_bytes(), b"fixture signed codec")
+            self.assertTrue((payload / "app/carplay-desktop").is_file())
+            self.assertTrue((payload / "INSTALLATION.json").is_file())
+            manifest.assert_called_once_with(payload, "aarch64-apple-darwin")
+            signing = [command for command in commands if command[0] == "/usr/bin/codesign"]
+            self.assertEqual(len(signing), 2)
+            self.assertNotIn("--deep", signing[0])  # Never re-sign and alter the runtime manifest.
+            self.assertIn("--deep", signing[1])
+
+    def test_inno_lookup_uses_real_installation_instead_of_chocolatey_shim(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shim = root / "chocolatey/bin/ISCC.exe"
+            compiler = root / "programs/Inno Setup 6/ISCC.exe"
+            for path in (shim, compiler):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture compiler")
+            (compiler.parent / "License.txt").write_text("fixture redistribution license", encoding="utf-8")
+            environment = {"ISCC_PATH": "", "ProgramFiles(x86)": str(root / "programs"),
+                           "ProgramFiles": str(root / "programs64")}
+            with patch.dict(installers.os.environ, environment), patch.object(installers.shutil, "which", return_value=str(shim)):
+                self.assertEqual(installers.find_iscc(), compiler)
+                # An explicit override is respected and must include licensing;
+                # never silently pair a different compiler with this license.
+                with patch.dict(installers.os.environ, {"ISCC_PATH": str(shim)}):
+                    with self.assertRaisesRegex(RuntimeError, "not a PATH shim"):
+                        installers.find_iscc()
+                (compiler.parent / "License.txt").unlink()
+                with self.assertRaisesRegex(RuntimeError, "adjacent License.txt"):
+                    installers.find_iscc()
+
     def test_ico_keeps_the_existing_png_pixels_and_valid_directory_offset(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "icon.ico"

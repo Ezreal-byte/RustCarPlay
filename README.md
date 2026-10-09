@@ -4,7 +4,7 @@
 
 基于 [DiPlay](https://github.com/shihabal3amri/DiPlay) 的 Rust CarPlay 接收端。以共享 Rust 协议实现连接与媒体会话，通过平台原生适配器接入设备，桌面界面使用 **egui / wgpu**，媒体后端使用 **GStreamer**。
 
-**v0.1.1 提供桌面安装包预览：Windows Setup、macOS DMG 和 Ubuntu DEB。** 媒体运行时和固定的实验认证材料随包提供，另保留便携包。已有 Windows 开发版本与一台 iPhone 的无线/USB 实测；本轮 CI 与安装环境验证仍在进行，尚未完成 DiPlay 功能对齐和长期稳定性验收。
+**v0.1.1 提供桌面安装包预览：Windows Setup、macOS DMG 和 Ubuntu DEB。** 媒体运行时和固定的实验认证材料随包提供，另保留便携包。已有 Windows 开发版本与一台 iPhone 的无线/USB 实测；发布流程检查解压启动和安装布局，尚未完成 DiPlay 功能对齐和长期稳定性验收。
 
 [下载 / Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) · [开发与运行](docs/DEVELOPMENT.md) · [验收记录](docs/ACCEPTANCE.md) · [问题反馈](https://github.com/Ezreal-byte/RustCarPlay/issues)
 
