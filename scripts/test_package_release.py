@@ -21,8 +21,8 @@ class ReleasePackagingTests(unittest.TestCase):
             target = "x86_64-pc-windows-msvc"
             executable_dir = root / "target" / target / "release"
             (executable_dir / "examples").mkdir(parents=True)
-            for name in ("RustCarPlay.exe", "carplay-desktop.exe", "rustcarplay.exe", "must-not-ship.dll", "private.pdb"):
-                (executable_dir / name).write_bytes(b"fixture")
+            for name in ("carplay-launcher.exe", "carplay-desktop.exe", "rustcarplay.exe", "must-not-ship.dll", "private.pdb"):
+                (executable_dir / name).write_bytes(name.encode())
             for name in release.USB_HELPERS:
                 (executable_dir / "examples" / (name + ".exe")).write_bytes(b"helper")
             (root / "scripts").mkdir()
@@ -55,6 +55,8 @@ class ReleasePackagingTests(unittest.TestCase):
                 self.assertIn("RustCarPlay.exe", names)
                 self.assertIn("app/carplay-desktop.exe", names)
                 self.assertIn("app/rustcarplay.exe", names)
+                self.assertEqual(archive.read("RustCarPlay-0.1.0-windows-x86_64/RustCarPlay.exe"), b"carplay-launcher.exe")
+                self.assertEqual(archive.read("RustCarPlay-0.1.0-windows-x86_64/app/rustcarplay.exe"), b"rustcarplay.exe")
                 self.assertIn("scripts/usb-runtime-packages.json", names)
                 self.assertIn("DEPENDENCIES-SOURCE.txt", names)
                 self.assertIn("RUNTIME.txt", names)
@@ -92,9 +94,14 @@ class ReleasePackagingTests(unittest.TestCase):
             (root / "cerbero-1.28.7.tar.xz").write_bytes(b"native upstream source")
             for label in ("windows-x86_64", "linux-x86_64", "linux-aarch64"):
                 (root / f"RustCarPlay-0.1.0-native-source-{label}.tar.gz").write_bytes(b"native source")
+            with self.assertRaises(ValueError):
+                release.checksums("0.1.0", root)
+            for name in ("RustCarPlay-0.1.0-windows-x86_64-setup.exe", "RustCarPlay-0.1.0-macos-x86_64.dmg",
+                         "RustCarPlay-0.1.0-macos-aarch64.dmg", "rustcarplay_0.1.0_amd64.deb", "rustcarplay_0.1.0_arm64.deb"):
+                (root / name).write_bytes(b"installer")
             release.checksums("0.1.0", root)
             lines = (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(lines), 10)
+            self.assertEqual(len(lines), 15)
             for line in lines:
                 digest, name = line.split("  ", 1)
                 self.assertEqual(digest, hashlib.sha256((root / name).read_bytes()).hexdigest())

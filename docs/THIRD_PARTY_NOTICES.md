@@ -20,23 +20,25 @@ The v0.1.1 binary preview includes the fixed accessory identity from DiPlay's v0
 
 ## 运行时与对应源码 / Runtimes and corresponding source
 
-Rust 依赖及精确版本见 Cargo.lock。GStreamer 与各原生依赖保留各自的 LGPL/GPL/其他许可，不因随包分发改为本项目许可。v0.1.1 二进制包包含 GStreamer 库、插件、必要的可分发用户态依赖及其许可材料；Windows 包另含 USB 用户态 DLL。运行时通过动态库加载，根启动器仅为子进程配置包内路径。SpeexDSP 尚未集成本工程，未来复用时需保留其 BSD 许可和组件声明。
+Rust 依赖及精确版本见 Cargo.lock。GStreamer 与各原生依赖保留各自的 LGPL/GPL/其他许可，不因随包分发改为本项目许可。v0.1.1 的 Windows Setup、macOS DMG、Ubuntu DEB 与便携包使用相同的应用和原生运行时材料，包含 GStreamer 库、插件、必要的可分发用户态依赖及其许可材料；Windows 包另含 USB 用户态 DLL。运行时通过动态库加载，根启动器仅为子进程配置包内路径。安装包同样保留 `runtime/licenses/`、原生清单和对应源码指引；安装形式不改变组件许可。SpeexDSP 尚未集成本工程，未来复用时需保留其 BSD 许可和组件声明。
 
-v0.1.1 的发布资产约定包含以下源码附件；本轮 CI 与打包验证尚未完成，实际发布以完整资产及校验和为准：
+v0.1.1 约定为五个安装包、五个便携包、以下五个源码附件及 `SHA256SUMS`，共 16 个附件；Android 与 HarmonyOS 本轮不构建。本轮 CI 与安装验证尚未完成，实际发布以完整资产及校验和为准：
 
 | 附件 | 内容 |
 | --- | --- |
 | `RustCarPlay-0.1.1-source.tar.gz` | 项目源码、构建与准备脚本、Cargo.lock，以及 `cargo vendor --locked --versioned-dirs` 保存的 Rust 依赖源码/许可证；不含认证私钥 |
 | `cerbero-1.28.7.tar.xz` | 共享的 GStreamer 官方对应源码归档 |
-| `RustCarPlay-0.1.1-native-source-windows-x86_64.tar.gz` | Windows 包其余原生依赖的对应源码、许可证和构建来源记录 |
+| `RustCarPlay-0.1.1-native-source-windows-x86_64.tar.gz` | Windows 包其余原生依赖及 libusb-win32 1.4.0.2 过滤驱动的精确对应源码、许可证和构建来源记录 |
 | `RustCarPlay-0.1.1-native-source-linux-x86_64.tar.gz` | Linux x64 包所需的发行版原生依赖对应源码及来源记录 |
 | `RustCarPlay-0.1.1-native-source-linux-aarch64.tar.gz` | Linux ARM64 包所需的发行版原生依赖对应源码及来源记录 |
 
-二进制包的 `runtime/NATIVE-MANIFEST.json`、`runtime/licenses/` 应与同一 Release 的源码附件配套阅读；仅有包名、下载链接或许可元数据不能代替适用许可证要求的对应源码。Rust 源码归档提供相对路径的离线 Cargo vendor 配置；重建 native 部分仍需对应平台的编译环境和所附原生源码/构建说明。Linux 的 GStreamer 与依赖来自 Ubuntu，其对应源码包含在各 Linux native-source 附件；共享 Cerbero 归档用于 Windows/macOS 官方构建。Linux 包以 Ubuntu 24.04 / glibc 2.39 为基线，系统桌面、图形/音频驱动、BlueZ、NetworkManager 和 usbmuxd 服务不随应用安装。
+二进制包的 `runtime/NATIVE-MANIFEST.json`、`runtime/licenses/` 应与同一 Release 的源码附件配套阅读；仅有包名、下载链接或许可元数据不能代替适用许可证要求的对应源码。Rust 源码归档提供相对路径的离线 Cargo vendor 配置；重建 native 部分仍需对应平台的编译环境和所附原生源码/构建说明。Linux 的 GStreamer 与依赖来自 Ubuntu，其对应源码包含在各 Linux native-source 附件；共享 Cerbero 归档用于 Windows/macOS 官方构建。Linux 包以 Ubuntu 24.04 / glibc 2.39 为基线。DEB 声明的图形库、BlueZ、NetworkManager 和 usbmuxd 等依赖由系统包管理器提供，未预装时可能需要联网安装；桌面和硬件驱动仍由操作系统管理。
 
-Windows 媒体运行时所需的 Microsoft Visual C++ runtime 保留 Microsoft 的专有再分发条款，相关材料放在 `runtime/licenses/microsoft/`；它不是开源组件，不包含在 GPL 对应源码承诺中。Apple 软件、系统驱动和 Windows UsbNcm 不随包分发。
+Windows 媒体运行时所需的 Microsoft Visual C++ runtime 保留 Microsoft 的专有再分发条款，相关材料放在 `runtime/licenses/microsoft/`；它不是开源组件，不包含在 GPL 对应源码承诺中。Apple 软件、Apple 系统驱动和 Windows UsbNcm 不随包分发；libusb-win32 过滤驱动 ZIP 作为独立资源随包提供，不自动安装。
 
-v0.1.1 bundles native media libraries/plugins and selected user-space dependencies. Each component retains its upstream license. The matching Rust source asset contains vendored Rust sources/licenses and build scripts, without authentication private keys. The shared `cerbero-1.28.7.tar.xz` and three platform-specific native-source assets provide the native source material listed above. Read the binary package's provenance/license inventory together with those source assets. Package names or license metadata alone do not replace corresponding-source requirements. Validation of the new package set is still in progress.
+Windows Setup 使用 Inno Setup 6 构建，保留安装器自身的版权信息，并将构建器随附的许可全文保存为 `resources/installer/INNO-SETUP-LICENSE.txt`。安装脚本包含于本项目源码附件；Inno Setup 的许可独立于本项目 GPL。macOS DMG 与 Linux DEB 使用对应平台打包工具生成，不包含 Android 或 HarmonyOS 安装产物。
+
+v0.1.1 installers and portable archives bundle the same native media libraries/plugins and selected user-space dependencies. Each component retains its upstream license. Windows Setup uses Inno Setup 6 and includes its license at `resources/installer/INNO-SETUP-LICENSE.txt`. The matching Rust source asset contains vendored Rust sources/licenses and build/installer scripts, without authentication private keys. The shared `cerbero-1.28.7.tar.xz` and three platform-specific native-source assets provide the native source material listed above. Five installers, five portable archives, these five source archives and `SHA256SUMS` make 16 attachments; Android and HarmonyOS are not built. Read the binary package's provenance/license inventory together with those source assets. Package names or license metadata alone do not replace corresponding-source requirements. Validation of the new package set is still in progress.
 
 ## v0.1.0 历史分发方式 / Previous distribution
 
@@ -50,4 +52,6 @@ Linux USB 后端动态调用 [libimobiledevice](https://github.com/libimobiledev
 
 Windows 用户态 USB 运行时由 `scripts/setup-usb-runtime.ps1` 从 [MSYS2 官方 UCRT64 仓库](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-libimobiledevice) 准备。准确版本、完整依赖闭包、发布 SHA-256 和 MSYS2 源码包链接在 `scripts/usb-runtime-packages.json`；开发时提取到被 Git 忽略的 `.local/usb-runtime/`，v0.1.1 打包到 `runtime/usb/`。主要组件包括 libimobiledevice、libplist、libusbmuxd、libimobiledevice-glue（LGPL 系列；部分工具为 GPL）、OpenSSL（Apache-2.0）、GCC runtime（GPL 加 GCC Runtime Library Exception，libquadmath 为 LGPL）、winpthreads（MIT/BSD）和 tzdata（公有领域）。脚本保留软件包 `.PKGINFO`、所含许可材料及标准 GNU 许可文本到 `licenses/`，不运行包安装脚本。对应源码随本轮 Windows native-source 附件提供；系统驱动准备保持独立，不由根启动器自动执行。
 
-Windows 可选 USB 控制过滤器来自 [libusb-win32 1.4.0.2](https://github.com/mcuee/libusb-win32/releases/tag/release_1.4.0.2)。该发布包的 `installer_license.txt` 将内核驱动标为 GPL，将用户态库、测试文件和安装器标为 LGPL；包内 `COPYING_GPL.txt`、`COPYING_LGPL.txt` 分别为 GPL v3 和 LGPL v3，完整材料保留在下载包。准备工具校验固定包摘要、Microsoft WHCP 目录签名和内核目录成员；本项目未修改或重新签名其内核二进制。Windows USB 复合配置研究参考 [0xbaksa 的反向 USB 网络实验](https://github.com/0xbaksa/iphone-usb-reverse-tethering-windows)（MIT）和 Microsoft 官方文档；其 mode 3 网络结果不能视为本项目 mode 4 CarPlay 已验收。
+Windows 可选 USB 控制过滤器来自 [libusb-win32 1.4.0.2](https://github.com/mcuee/libusb-win32/releases/tag/release_1.4.0.2)。v0.1.1 Windows 包在 `runtime/usb-driver/libusb-win32-bin-1.4.0.2.zip` 保存原始资源，并从该固定 ZIP 提取用户态 `libusb0.dll` 至 `runtime/usb-filter/`，附来源记录；精确 release 对应源码并入 Windows native-source 附件。该发布包的 `installer_license.txt` 将内核驱动标为 GPL，将用户态库、测试文件和安装器标为 LGPL；包内 `COPYING_GPL.txt`、`COPYING_LGPL.txt` 分别为 GPL v3 和 LGPL v3，完整材料保留在原 ZIP，并纳入随包许可索引。准备工具优先使用随包 ZIP，仍校验固定包摘要、Microsoft WHCP 目录签名和内核目录成员；本项目未修改或重新签名其内核二进制。应用与 Setup 均不会自动安装该驱动，现有单设备准备、管理员权限与恢复流程保持不变。Windows USB 复合配置研究参考 [0xbaksa 的反向 USB 网络实验](https://github.com/0xbaksa/iphone-usb-reverse-tethering-windows)（MIT）和 Microsoft 官方文档；其 mode 3 网络结果不能视为本项目 mode 4 CarPlay 已验收。
+
+The Windows archive includes the original `libusb-win32-bin-1.4.0.2.zip` under `runtime/usb-driver/` as an optional preparation resource, never an automatic installation. Its exact release source is included in the existing Windows native-source archive. Upstream GPL/LGPL notices remain in the ZIP and bundled license inventory. Preparation retains pinned-hash and kernel-signature checks, administrator requirements and per-device recovery. Apple services, Apple drivers and Windows UsbNcm are not redistributed.

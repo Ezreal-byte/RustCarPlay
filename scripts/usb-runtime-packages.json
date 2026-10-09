@@ -2,7 +2,7 @@
   "schema": 1,
   "platform": "windows-x86_64-ucrt",
   "verified_on": "2026-10-09",
-  "repository": "https://mirror.msys2.org/mingw/ucrt64/",
+  "repository": "https://repo.msys2.org/mingw/ucrt64/",
   "metadata_repository": "https://packages.msys2.org/packages/",
   "license_texts": [
     {
@@ -27,7 +27,7 @@
       "version": "1.3.0-17",
       "sha256": "2f8ede1528372fa0ec7d3ec9f248b22c43e3bb2f573025c9086781413d12a1d1",
       "license": "LGPL-2.1-or-later",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-libimobiledevice-1.3.0-17.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-libimobiledevice-1.3.0-17.src.tar.zst",
       "dependencies": ["libplist", "libusbmuxd", "openssl"]
     },
     {
@@ -35,7 +35,7 @@
       "version": "2.7.0-4",
       "sha256": "665607c34dbf923ebb820d78b376db59de4d2d3874a45d70f24f51eb1d64f127",
       "license": "LGPL-2.1-or-later (library); GPL-2.0-or-later (tools)",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-libplist-2.7.0-4.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-libplist-2.7.0-4.src.tar.zst",
       "dependencies": ["cc-libs"]
     },
     {
@@ -43,7 +43,7 @@
       "version": "2.1.1-1",
       "sha256": "27c86acc00eda349947fa0fde05cfca805ab1aee6da4cc4e4a6486aedf054f1c",
       "license": "LGPL-2.1-or-later",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-libusbmuxd-2.1.1-1.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-libusbmuxd-2.1.1-1.src.tar.zst",
       "dependencies": ["libimobiledevice-glue", "libplist"]
     },
     {
@@ -51,7 +51,7 @@
       "version": "1.3.2-1",
       "sha256": "d089c718ab846c5bd1f41fb2788a976fdbda13c9f09128a670eca578da0bc34f",
       "license": "LGPL-2.1-or-later",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-libimobiledevice-glue-1.3.2-1.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-libimobiledevice-glue-1.3.2-1.src.tar.zst",
       "dependencies": ["libplist"]
     },
     {
@@ -59,7 +59,7 @@
       "version": "3.6.5-1",
       "sha256": "773e021ebad83f14b5c103db467411e8ff064663e1c7e7f730e2be72f4117064",
       "license": "Apache-2.0",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-openssl-3.6.5-1.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-openssl-3.6.5-1.src.tar.zst",
       "dependencies": []
     },
     {
@@ -67,7 +67,7 @@
       "version": "16.2.0-4",
       "sha256": "b05218ea8b8f2142d2042cd01843810f4cf9345af6e5e7fe39395590cd55b2dc",
       "license": "GPL-3.0-or-later WITH GCC-exception-3.1 AND GFDL-1.3-or-later",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
       "dependencies": ["libatomic", "libgcc", "libquadmath", "libstdc++"]
     },
     {
@@ -75,7 +75,7 @@
       "version": "16.2.0-4",
       "sha256": "81d960422f47c9cff742aa5a6dd6c587ba39e5da64738d903730e79577479582",
       "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
       "dependencies": ["libwinpthread"]
     },
     {
@@ -83,7 +83,7 @@
       "version": "16.2.0-4",
       "sha256": "de65b4adae899d9278427402e29d03860bacba481794460f3a1d078610cbb783",
       "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
       "dependencies": ["libwinpthread"]
     },
     {
@@ -91,7 +91,7 @@
       "version": "16.2.0-4",
       "sha256": "75960aa837a7fc6dc8313afb11014bf7f42548ab6067498d0b561cc3c490b5b2",
       "license": "LGPL-2.1-or-later",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
       "dependencies": ["libgcc"]
     },
     {
@@ -99,7 +99,7 @@
       "version": "16.2.0-4",
       "sha256": "2211dbbf1220287e49f5d66bb6cb09ee5a157901a485197553c9a940cc902d5b",
       "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-gcc-16.2.0-4.src.tar.zst",
       "dependencies": ["libgcc", "libwinpthread", "tzdata"]
     },
     {
@@ -107,7 +107,7 @@
       "version": "14.0.0.r426.g4564ee4b5-1",
       "sha256": "f8de8153bbc0e47ba244a423c12c426fa1d9f56395117ecaa34c6ad6ebed6ca3",
       "license": "MIT AND BSD-3-Clause-Clear",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-winpthreads-14.0.0.r426.g4564ee4b5-1.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-winpthreads-14.0.0.r426.g4564ee4b5-1.src.tar.zst",
       "dependencies": []
     },
     {
@@ -115,7 +115,7 @@
       "version": "2026e-1",
       "sha256": "f1809089f8ed5cec858ae8584289172896eb921be1e78ba583555f74e9015428",
       "license": "public domain",
-      "source": "https://mirror.msys2.org/mingw/sources/mingw-w64-tzdata-2026e-1.src.tar.zst",
+      "source": "https://repo.msys2.org/mingw/sources/mingw-w64-tzdata-2026e-1.src.tar.zst",
       "dependencies": []
     }
   ]

@@ -1,6 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
-// The public portable entry point is intentionally named RustCarPlay.exe.
-#![allow(non_snake_case)]
+// Packaging renames this binary to RustCarPlay(.exe). A different build name
+// avoids overwriting the rustcarplay CLI on case-insensitive filesystems.
 
 use carplay_launcher::{LaunchPlan, Platform};
 use std::collections::BTreeMap;
@@ -37,7 +37,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<i32, String> {
     for directory in [&plan.registry_directory, &plan.log_directory] {
         fs::create_dir_all(directory).map_err(|error| {
             format!(
-                "Cannot create {}: {error}. Extract this portable package into a writable directory.",
+                "Cannot create {}: {error}. Check that the application data directory is writable.",
                 directory.display()
             )
         })?;
@@ -49,7 +49,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<i32, String> {
         .open(&log_path)
         .map_err(|error| {
             format!(
-                "Cannot write {}: {error}. Use a writable extraction directory.",
+                "Cannot write {}: {error}. Check that the application data directory is writable.",
                 log_path.display()
             )
         })?;

@@ -125,7 +125,11 @@ try {
         $result = @{ action='Restore'; success=$true; device_id=$DeviceId; original_device_configuration_restored=$true }
         $success = $true
     } else {
-        $env:RUSTCARPLAY_LIBIMOBILEDEVICE_DIR = Join-Path $workspace '.local/usb-runtime/bin'
+        # Keep an explicit override or the portable runtime selected above.
+        # Source checkouts fall back to the locally prepared development files.
+        if (-not $env:RUSTCARPLAY_LIBIMOBILEDEVICE_DIR) {
+            $env:RUSTCARPLAY_LIBIMOBILEDEVICE_DIR = Join-Path $workspace '.local/usb-runtime/bin'
+        }
         $runtime = & $runtimeCheck 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'USB runtime or Apple local USBMUX service is unavailable; run setup-usb-runtime.ps1 and open iTunes/Apple Devices.' }
         if ($null -ne $phone.configuration -and $phone.active_configuration -eq $phone.configuration.configuration_value) {

@@ -4,7 +4,7 @@
 
 基于 [DiPlay](https://github.com/shihabal3amri/DiPlay) 的 Rust CarPlay 接收端。以共享 Rust 协议实现连接与媒体会话，通过平台原生适配器接入设备，桌面界面使用 **egui / wgpu**，媒体后端使用 **GStreamer**。
 
-**v0.1.1 是完整离线包预览。** 包内提供媒体运行时、启动器和固定的实验认证材料，解压后从根目录启动。已有 Windows 开发版本与一台 iPhone 的无线/USB 实测；本轮离线包的 CI 与安装环境验证仍在进行，尚未完成 DiPlay 功能对齐和长期稳定性验收。
+**v0.1.1 提供桌面安装包预览：Windows Setup、macOS DMG 和 Ubuntu DEB。** 媒体运行时和固定的实验认证材料随包提供，另保留便携包。已有 Windows 开发版本与一台 iPhone 的无线/USB 实测；本轮 CI 与安装环境验证仍在进行，尚未完成 DiPlay 功能对齐和长期稳定性验收。
 
 [下载 / Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) · [开发与运行](docs/DEVELOPMENT.md) · [验收记录](docs/ACCEPTANCE.md) · [问题反馈](https://github.com/Ezreal-byte/RustCarPlay/issues)
 
@@ -21,8 +21,8 @@
 | Windows 11 x64 | 一台 iPhone 实测：无线/USB 画面、触控和声音；USB 暂停与重连初测正常 |
 | Linux x64 / ARM64 | Ubuntu 24.04 / glibc 2.39 基线；USB、BlueZ 与 NetworkManager 后端已有实现，尚未真机验收 |
 | macOS Intel / Apple Silicon | macOS 15 GUI/核心预览，未公证；原生 RFCOMM、USB 及网络配置适配尚未完成，不能完成接收端连接 |
-| Android | 共享核心移植方向明确，Kotlin/JNI 外壳及系统适配未实现 |
-| HarmonyOS / NEXT | 规划 ArkTS + 原生桥接；系统接口、权限和真机能力尚未验证 |
+| Android | 本轮不构建；Kotlin/JNI 外壳及系统适配未实现 |
+| HarmonyOS / NEXT | 本轮不构建；ArkTS/原生桥接、权限和真机能力尚未验证 |
 
 构建目标不代表该平台已有成功发布或真机支持，实际产物以 Releases 和工作流结果为准。20 次连接循环、两小时运行、Siri/通话、音频设备切换和休眠恢复仍待验收。
 
@@ -37,10 +37,17 @@
 
 ## 开始使用
 
-1. 从 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) 选择匹配系统与架构的包，并核对 `SHA256SUMS`。
-2. 完整解压到可写目录，启动根目录的 **`RustCarPlay.exe`**（Windows）或 **`./RustCarPlay`**（Linux/macOS）。普通启动无需安装 Rust、Python、PowerShell 或 GStreamer，也无需手填证书目录；个人设置与配对状态在本地生成，不随包分发。
-3. Windows 建议先选局域网模式：电脑与 iPhone 自行加入同一 Wi-Fi，在系统中完成蓝牙配对后连接，应用内无需输入 Wi-Fi 密码。
-4. **USB 仍有系统前置条件。** Windows 需要 Apple Mobile Device Service、信任/权限与[设备配置](docs/WINDOWS_USB_DRIVER.md)；准备脚本目前还依赖 PowerShell 7 和相关 SDK 工具，并非完全即插即用。Linux 仍需系统桌面、图形/音频驱动、BlueZ、NetworkManager、usbmuxd 及相应权限，这些系统组件不随包安装。
+从 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) 下载匹配系统与架构的安装包，并核对 `SHA256SUMS`：
+
+| 系统 | 下载与安装 |
+| --- | --- |
+| Windows 11 x64 | 运行 `RustCarPlay-0.1.1-windows-x86_64-setup.exe`，安装后从开始菜单打开；应用按当前用户安装，无需管理员权限 |
+| macOS 15 | 选择 `RustCarPlay-0.1.1-macos-aarch64.dmg`（Apple Silicon）或 `RustCarPlay-0.1.1-macos-x86_64.dmg`（Intel），将应用拖入 Applications；目前仅供界面/核心预览，不能连接 CarPlay |
+| Ubuntu 24.04 | 使用 `sudo apt install ./rustcarplay_0.1.1_amd64.deb`；ARM64 将文件名换为 `rustcarplay_0.1.1_arm64.deb`，安装后从应用菜单打开；真机连接仍待验证 |
+
+普通启动无需另装开发工具或 GStreamer，也无需手填认证目录。安装版将个人设置、配对和日志保存到用户数据目录，卸载保留这些数据；[具体路径](docs/DEVELOPMENT.md#安装与个人数据)。需要便携使用时，完整解压 ZIP/TAR 到可写目录，启动根目录的 `RustCarPlay.exe` 或 `./RustCarPlay`。
+
+Windows 建议先选局域网模式：电脑与 iPhone 加入同一 Wi-Fi，在系统中完成蓝牙配对后连接，应用内无需输入 Wi-Fi 密码。USB 另需 Apple Mobile Device Service、信任/权限与[设备配置](docs/WINDOWS_USB_DRIVER.md)；准备脚本需要 PowerShell 7 和 SDK 签名验证工具，不由安装程序自动执行。Linux 连接需要系统 BlueZ、NetworkManager、usbmuxd 和相应权限。
 
 离线包的实验身份取自固定 **DiPlay v0.2.15 预览 APK**，上游声明来源为 **Carlinkit 公开固件**。它不是新签发身份，不适用项目源码的 GPL 许可；公开可下载不等于获得再分发许可，分发适用性与未来 iOS 接受情况仍未确定。来源记录随包放在 `resources/auth/provenance.json`，私钥不进入 Git 或源码包。详见[第三方声明](docs/THIRD_PARTY_NOTICES.md)。
 

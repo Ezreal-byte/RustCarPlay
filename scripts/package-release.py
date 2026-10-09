@@ -72,7 +72,9 @@ and are not included in the source archive. See resources/auth/provenance.json.
 runtime/NATIVE-MANIFEST.json and runtime/licenses identify native components.
 The same release supplies cerbero-1.28.7.tar.xz (the upstream complete native
 source bundle) and platform-specific native-source archives for USB/Ubuntu
-libraries. Apple software and device drivers are not bundled.
+libraries and the pinned libusb-win32 filter-driver source. Its original signed
+installation archive is included for manual USB preparation; Apple software
+and Windows system drivers are not bundled.
 See LICENSE and THIRD_PARTY_NOTICES.md for this application's source notices.
 """
 
@@ -101,7 +103,8 @@ Packaging is not an interoperability guarantee on untested hardware.
 Command line: RustCarPlay.exe --cli --help
 The launcher needs no PowerShell, Rust, Python or separately installed
 GStreamer. LAN still requires the PC/iPhone on the same Wi-Fi and Bluetooth
-pairing in system settings. USB user-mode libraries/helpers are bundled;
+pairing in system settings. USB user-mode libraries/helpers and the pinned
+libusb-win32 filter installation archive are bundled;
 Apple Mobile Device Service and a compatible USBMUX/NCM device/driver setup
 are still required. See docs/WINDOWS_USB_DRIVER.md for USB preparation.
 No bundled launcher installs drivers or requests administrator rights.
@@ -149,8 +152,8 @@ def binary(current: str, target: str, output: Path, repository: str) -> None:
         package = Path(temp) / name
         package.mkdir()
         (package / "app").mkdir()
-        launcher = ROOT / "target" / target / "release" / ("RustCarPlay" + suffix)
-        shutil.copy2(launcher, package / launcher.name)
+        launcher = ROOT / "target" / target / "release" / ("carplay-launcher" + suffix)
+        shutil.copy2(launcher, package / ("RustCarPlay" + suffix))
         for executable in ("carplay-desktop", "rustcarplay"):
             source = ROOT / "target" / target / "release" / (executable + suffix)
             if not source.is_file():
@@ -225,6 +228,10 @@ def checksums(current: str, output: Path) -> None:
     names.append("cerbero-1.28.7.tar.xz")
     names.extend(f"RustCarPlay-{current}-native-source-{label}.tar.gz"
                  for label in ("windows-x86_64", "linux-x86_64", "linux-aarch64"))
+    names.extend((f"RustCarPlay-{current}-windows-x86_64-setup.exe",
+                  f"RustCarPlay-{current}-macos-x86_64.dmg",
+                  f"RustCarPlay-{current}-macos-aarch64.dmg",
+                  f"rustcarplay_{current}_amd64.deb", f"rustcarplay_{current}_arm64.deb"))
     actual = sorted(path.name for path in output.iterdir() if path.is_file() and path.name != "SHA256SUMS")
     if actual != sorted(names):
         raise ValueError(f"Release assets must match the complete target matrix: {actual!r}")

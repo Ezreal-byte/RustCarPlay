@@ -16,14 +16,15 @@ import re
 import shutil
 import struct
 import subprocess
+import tarfile
 import tempfile
 import tomllib
 import urllib.request
 import zipfile
 
 from native_runtime_sources import (
-    GST_VERSION, cerbero_sources, debian_sources, microsoft_license,
-    sha256, usb_sources, write_json,
+    GST_VERSION, cerbero_sources, debian_sources, download, microsoft_license,
+    sha256, source_record, usb_sources, write_json,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -213,6 +214,52 @@ def windows_provenance(prefix: Path, runtime: Path, wheel_directory: Path) -> li
     return result
 
 
+def bundle_usb_driver(cache: Path, runtime: Path) -> tuple[Path, dict]:
+    """Package reviewed installer resources without loading or installing a driver."""
+    binary_name = "libusb-win32-bin-1.4.0.2.zip"
+    binary_url = "https://github.com/mcuee/libusb-win32/releases/download/release_1.4.0.2/" + binary_name
+    binary_sha = "00004c92cdb99be36e17fb2377165eb97e63b48ba895bfc04a642ea9c3e26d94"
+    binary = download(binary_url, cache / binary_name, binary_sha)
+    copy_file(binary, runtime / "usb-driver" / binary_name)
+    with zipfile.ZipFile(binary) as archive:
+        # The running receiver needs the matching user-mode control library
+        # after the separately authorized per-device driver preparation.
+        library = runtime / "usb-filter/libusb0.dll"
+        library.parent.mkdir(parents=True, exist_ok=True)
+        library.write_bytes(archive.read("libusb-win32-bin-1.4.0.2/bin/amd64/libusb0.dll"))
+        pending = [library]
+        copied = {library.name.lower()}
+        while pending:
+            for name in pe_imports(pending.pop()):
+                if windows_system_dll(name) or name in copied:
+                    continue
+                # LoadLibraryEx restricts this library to its own directory and
+                # System32, so its verified VC runtime must also live beside it.
+                dependency = runtime / "gstreamer/bin" / name
+                copy_file(dependency, library.parent / name)
+                copied.add(name)
+                pending.append(library.parent / name)
+        for name in ("COPYING_GPL.txt", "COPYING_LGPL.txt", "installer_license.txt", "README.txt"):
+            path = runtime / "licenses/libusb-win32" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(archive.read("libusb-win32-bin-1.4.0.2/" + name))
+    commit = "0987f983a89e5e60d3c2db2af46564239c1b0d37"
+    source_url = "https://codeload.github.com/mcuee/libusb-win32/tar.gz/" + commit
+    source_sha = "b710538a40446ed919f761dc4e91cd91c389c34bd5b35fd929df476425acf110"
+    source = download(source_url, cache / ("libusb-win32-" + commit + ".tar.gz"), source_sha)
+    with tarfile.open(source) as archive:
+        names = set(archive.getnames())
+        root = "libusb-win32-" + commit + "/libusb/"
+        for name in ("src/driver/libusb_driver.c", "projects/vs2019/libusb-win32.sln", "COPYING_GPL.txt", "COPYING_LGPL.txt"):
+            if root + name not in names:
+                raise RuntimeError("Incomplete libusb-win32 release source archive")
+    record = {**source_record(source, source_url), "release_tag": "release_1.4.0.2", "commit": commit,
+              "binary": source_record(binary, binary_url),
+              "build_instructions": "Included libusb/README.in, Makefile, ddk_make and projects/vs2019 retain driver and user-mode build definitions; Microsoft WDK/SDK are external system toolchains."}
+    write_json(runtime / "usb-driver/PROVENANCE.json", record)
+    return source, record
+
+
 def bundle_usb(prefix: Path, runtime: Path, cache: Path, output: Path, version: str) -> dict:
     manifest = json.loads((ROOT / "scripts/usb-runtime-packages.json").read_text(encoding="utf-8"))
     installed = json.loads((prefix / "packages.json").read_text(encoding="utf-8"))
@@ -235,7 +282,8 @@ def bundle_usb(prefix: Path, runtime: Path, cache: Path, output: Path, version: 
         copy_file(path, runtime / "usb/bin" / name)
     shutil.copytree(prefix / "licenses", runtime / "licenses/usb", dirs_exist_ok=True)
     write_json(runtime / "usb/packages.json", manifest)
-    return usb_sources(manifest, cache, output, version)
+    driver_source = bundle_usb_driver(cache, runtime)
+    return usb_sources(manifest, cache, output, version, [driver_source])
 
 
 def parse_ldd(text: str) -> dict[str, Path]:
@@ -354,6 +402,65 @@ def macho_rpaths(path: Path) -> list[str]:
                                         run(["otool", "-l", path]))))
 
 
+def macho_install_ids(path: Path) -> set[str]:
+    # otool -L includes LC_ID_DYLIB before actual dependencies. It must not be
+    # resolved as a dependency, particularly for a nested @rpath backend.
+    # Universal files may report the same ID once per architecture.
+    return {line.strip() for line in run(["otool", "-D", path]).splitlines()
+            if line.strip() and not line.rstrip().endswith(":")}
+
+
+def macho_sdk_roots(prefix: Path) -> tuple[Path, ...]:
+    return (prefix, Path("/Library/Frameworks/GStreamer.framework/Versions/1.0"),
+            Path("/Library/Frameworks/GStreamer.framework/Versions/Current"))
+
+
+def private_macho_path(candidate: Path, prefix: Path, destination: Path) -> Path | None:
+    """Map an SDK location to its copied counterpart, never to the installed SDK."""
+    candidate = candidate.resolve()
+    private_root = destination.resolve()
+    if candidate.is_relative_to(private_root):
+        return candidate
+    for original_root in macho_sdk_roots(prefix):
+        original_root = original_root.resolve()
+        if candidate.is_relative_to(original_root):
+            local = (private_root / candidate.relative_to(original_root)).resolve()
+            if local.is_relative_to(private_root):
+                return local
+    return None
+
+
+def resolve_macho_dependency(dependency: str, image: Path, rpaths: list[str],
+                             prefix: Path, destination: Path) -> Path:
+    candidates = []
+    if dependency.startswith("@rpath/"):
+        suffix = dependency.removeprefix("@rpath/")
+        # Keep the original LC_RPATH order and subdirectories. libproxy's
+        # backend lives in lib/libproxy/, not alongside the top-level dylibs.
+        for rpath in rpaths:
+            if rpath == "@loader_path" or rpath.startswith("@loader_path/"):
+                base = image.parent / rpath.removeprefix("@loader_path").lstrip("/")
+            elif rpath.startswith("/") or Path(rpath).is_absolute():
+                base = Path(rpath)
+            else:
+                continue
+            candidates.append(base / suffix)
+        # Common SDK libraries may inherit the executable's lib/ runpath.
+        # This fallback is also private and never scans the host framework.
+        candidates.append(destination / "lib" / suffix)
+    elif dependency.startswith("@loader_path/"):
+        candidates.append(image.parent / dependency.removeprefix("@loader_path/"))
+    elif not dependency.startswith("@") and (dependency.startswith("/") or Path(dependency).is_absolute()):
+        candidates.append(Path(dependency))
+    else:
+        raise RuntimeError(f"Unsupported private Mach-O dependency: {dependency}")
+    for candidate in candidates:
+        local = private_macho_path(candidate, prefix, destination)
+        if local is not None and local.is_file():
+            return local
+    raise RuntimeError(f"Unresolved private Mach-O dependency: {dependency} in {image.name}")
+
+
 def macos_runtime(prefix: Path, runtime: Path, apps: list[Path]) -> list[dict]:
     if platform.system() != "Darwin":
         raise RuntimeError("macOS relocation and code signing require a macOS host")
@@ -376,40 +483,24 @@ def macos_runtime(prefix: Path, runtime: Path, apps: list[Path]) -> list[dict]:
             copy_file(source, destination / source.relative_to(prefix))
     private = [p for p in destination.rglob("*") if macho(p)]
     system = set()
-    old_prefixes = ("/Library/Frameworks/GStreamer.framework/Versions/1.0/",
-                    "/Library/Frameworks/GStreamer.framework/Versions/Current/", str(prefix) + "/")
     for path in private + apps:
         changes = []
-        for dependency in macho_dependencies(path):
-            original_prefix = next((p for p in old_prefixes if dependency.startswith(p)), None)
-            if original_prefix is not None:
-                relative = dependency.removeprefix(original_prefix)
-                local = destination / relative
-                if not local.is_file():
-                    raise RuntimeError(f"Missing private Mach-O dependency: {relative}")
-                relocated = "@loader_path/" + os.path.relpath(local, path.parent).replace(os.sep, "/")
-                changes.extend(["-change", dependency, relocated])
-            elif dependency.startswith(("/System/Library/", "/usr/lib/")):
+        original_rpaths = macho_rpaths(path)
+        dependencies = macho_dependencies(path)
+        if path.suffix == ".dylib":
+            dependencies -= macho_install_ids(path)
+        for dependency in dependencies:
+            if dependency.startswith(("/System/Library/", "/usr/lib/")):
                 system.add(dependency)
-            elif dependency.startswith("@"):
-                # Resolve existing @rpath entries to this runtime before release.
-                if dependency.startswith("@rpath/"):
-                    local = destination / "lib" / dependency.removeprefix("@rpath/")
-                elif dependency.startswith("@loader_path/"):
-                    local = path.parent / dependency.removeprefix("@loader_path/")
-                else:
-                    raise RuntimeError(f"Unsupported Mach-O dependency: {dependency}")
-                if not local.is_file():
-                    raise RuntimeError(f"Unresolved Mach-O dependency: {dependency}")
+            else:
+                local = resolve_macho_dependency(dependency, path, original_rpaths, prefix, destination)
                 relocated = "@loader_path/" + os.path.relpath(local, path.parent).replace(os.sep, "/")
                 changes.extend(["-change", dependency, relocated])
-            else:
-                raise RuntimeError(f"Non-system external Mach-O dependency: {dependency}")
         if path.suffix == ".dylib":
             changes.extend(["-id", "@loader_path/" + path.name])
         # Every private dependency now uses @loader_path. Remove SDK search paths
         # too, so a developer's framework installation cannot mask missing files.
-        for rpath in macho_rpaths(path):
+        for rpath in original_rpaths:
             if rpath.startswith("/Library/Frameworks/GStreamer.framework") or rpath.startswith(str(prefix)):
                 changes.extend(["-delete_rpath", rpath])
         if changes:

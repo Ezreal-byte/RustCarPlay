@@ -53,7 +53,7 @@ try {
         $file = $package.name + '-' + $package.version + '-any.pkg.tar.zst'
         $archive = Assert-WithinRuntime (Join-Path $download $file)
         if (-not (Test-Path -LiteralPath $archive)) {
-            $url = 'https://mirror.msys2.org/mingw/ucrt64/' + [Uri]::EscapeDataString($file)
+            $url = 'https://repo.msys2.org/mingw/ucrt64/' + [Uri]::EscapeDataString($file)
             Write-Output ('Downloading ' + $package.name + ' ' + $package.version)
             $partial = Assert-WithinRuntime ($archive + '.partial')
             Invoke-WebRequest -Uri $url -OutFile $partial -MaximumRetryCount 2 -RetryIntervalSec 2

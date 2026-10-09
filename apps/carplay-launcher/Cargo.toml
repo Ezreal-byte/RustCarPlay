@@ -4,8 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Dependency-free portable RustCarPlay application launcher"
+description = "Native-runtime-independent RustCarPlay application launcher"
+
+[dependencies]
+serde_json.workspace = true
 
 [[bin]]
-name = "RustCarPlay"
+name = "carplay-launcher"
 path = "src/main.rs"

@@ -135,6 +135,9 @@ jobs:
         run: |
           sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
+      - name: Align native runtime libraries with available exact Ubuntu sources
+        if: inputs.package && runner.os == 'Linux'
+        run: python scripts/ci-linux-native.py --target "$BUILD_TARGET" --apply
       - name: Prepare official Windows GStreamer SDK
         if: runner.os == 'Windows'
         shell: pwsh
@@ -145,6 +148,7 @@ jobs:
       - name: Verify native decoders
         run: python scripts/check-gstreamer.py
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: native-cache
         with:
           path: |
             ~/.cargo/registry
@@ -181,11 +185,20 @@ jobs:
       - name: Build Windows USB preparation helpers
         if: inputs.package && runner.os == 'Windows'
         shell: bash
-        run: cargo build --release --locked --target "$BUILD_TARGET" -p carplay-platform --example usb_probe --example usb_mode --example usb_runtime_check
+        run: RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --locked --target "$BUILD_TARGET" -p carplay-platform --example usb_probe --example usb_mode --example usb_runtime_check
       - name: Prepare bundled Windows USB user-mode libraries
         if: inputs.package && runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/setup-usb-runtime.ps1
+      - name: Preserve validated native build before installer packaging
+        if: inputs.package && steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: native-gst1.28.7-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - name: Cache verified upstream native source archives
         if: inputs.package
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -205,11 +218,36 @@ jobs:
           suffix=tar.gz
           [[ "$RUNNER_OS" != Windows ]] || suffix=zip
           python scripts/verify-portable-release.py --target "$BUILD_TARGET" --archive "dist/RustCarPlay-${RELEASE_TAG#v}-$ARCHIVE_LABEL.$suffix"
+      - name: Build native desktop installer
+        if: inputs.package
+        shell: bash
+        env:
+          ARCHIVE_LABEL: ${{ matrix.label }}
+        run: |
+          suffix=tar.gz
+          [[ "$RUNNER_OS" != Windows ]] || suffix=zip
+          python scripts/package-installers.py --target "$BUILD_TARGET" --archive "dist/RustCarPlay-${RELEASE_TAG#v}-$ARCHIVE_LABEL.$suffix" --output dist
+      - name: Verify installed application without developer runtime paths
+        if: inputs.package
+        shell: bash
+        env:
+          ARCHIVE_LABEL: ${{ matrix.label }}
+        run: |
+          case "$BUILD_TARGET" in
+            *windows*) installer="dist/RustCarPlay-${RELEASE_TAG#v}-$ARCHIVE_LABEL-setup.exe" ;;
+            *apple*) installer="dist/RustCarPlay-${RELEASE_TAG#v}-$ARCHIVE_LABEL.dmg" ;;
+            x86_64-unknown-linux-gnu) installer="dist/rustcarplay_${RELEASE_TAG#v}_amd64.deb" ;;
+            aarch64-unknown-linux-gnu) installer="dist/rustcarplay_${RELEASE_TAG#v}_arm64.deb" ;;
+            *) exit 1 ;;
+          esac
+          python scripts/package-installers.py --target "$BUILD_TARGET" --verify "$installer"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: inputs.package
         with:
           name: release-${{ matrix.label }}
-          path: dist/RustCarPlay-*-${{ matrix.label }}.*
+          path: |
+            dist/RustCarPlay-*-${{ matrix.label }}*
+            dist/rustcarplay_*.deb
           if-no-files-found: error
           compression-level: 0
           retention-days: 7

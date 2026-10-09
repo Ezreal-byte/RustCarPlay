@@ -163,7 +163,7 @@ def validate_layout(destination: Path, target: str) -> tuple[Path, str]:
     if system == "Windows":
         for helper in ["usb_probe", "usb_mode", "usb_runtime_check"]:
             require_file(root, f"tools/{helper}.exe")
-    for forbidden in [".local", ".git", "target"]:
+    for forbidden in [".local", ".git", "target", "INSTALLATION.json"]:
         if (root / forbidden).exists():
             raise VerificationError("The portable archive contains development or user state.")
     require_file(root, "resources/auth/identity.pk8", 16 * 1024)
@@ -213,7 +213,7 @@ def validate_runtime_manifest(root: Path, target: str) -> None:
 
 def clean_environment(temporary: Path, system: str) -> dict[str, str]:
     prefixes = ("GST", "GSTREAMER", "RUSTCARPLAY", "ALSA_", "LD_", "DYLD_", "GI_", "GIO_", "GOBJECT_", "PKG_CONFIG", "CARGO", "RUSTUP", "VCPKG", "CMAKE", "CONDA")
-    removed = {"PATH", "LIB", "LIBPATH", "INCLUDE", "RUSTFLAGS", "RUSTDOCFLAGS", "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "DEVELOPER_DIR", "PSMODULEPATH"}
+    removed = {"PATH", "LIB", "LIBPATH", "INCLUDE", "RUSTFLAGS", "RUSTDOCFLAGS", "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "DEVELOPER_DIR", "PSMODULEPATH", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"}
     environment = {key: value for key, value in os.environ.items()
                    if key.upper() not in removed and not key.upper().startswith(prefixes)}
     if system == "Windows":
@@ -223,6 +223,19 @@ def clean_environment(temporary: Path, system: str) -> dict[str, str]:
         environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
     scratch = temporary / "process temporary files"
     scratch.mkdir()
+    home = temporary / "isolated user profile"
+    home.mkdir()
+    for name, path in {
+        "HOME": home,
+        "USERPROFILE": home,
+        "LOCALAPPDATA": home / "AppData/Local",
+        "APPDATA": home / "AppData/Roaming",
+        "XDG_DATA_HOME": home / ".local/share",
+        "XDG_CONFIG_HOME": home / ".config",
+        "XDG_CACHE_HOME": home / ".cache",
+    }.items():
+        path.mkdir(parents=True, exist_ok=True)
+        environment[name] = str(path)
     for name in ["TEMP", "TMP", "TMPDIR"]:
         environment[name] = str(scratch)
     return environment
@@ -254,18 +267,20 @@ def run_captured(command: list[str], cwd: Path, environment: dict[str, str], lab
         return stdout
 
 
-def verify_windows_launcher_imports(launcher: Path) -> None:
-    data = launcher.read_bytes()
+def verify_windows_standalone_imports(executable: Path) -> None:
+    """Launchers and USB helpers must load without the application's DLL path."""
+    label = f"Windows executable {executable.name}"
+    data = executable.read_bytes()
     if data[:2] != b"MZ":
-        raise VerificationError("Windows launcher is not a PE executable.")
+        raise VerificationError(f"{label} is not a PE executable.")
     pe = struct.unpack_from("<I", data, 0x3C)[0]
     if data[pe:pe + 4] != b"PE\0\0":
-        raise VerificationError("Windows launcher has an invalid PE signature.")
+        raise VerificationError(f"{label} has an invalid PE signature.")
     machine, sections = struct.unpack_from("<HH", data, pe + 4)
     optional_size = struct.unpack_from("<H", data, pe + 20)[0]
     optional = pe + 24
     if machine != 0x8664 or struct.unpack_from("<H", data, optional)[0] != 0x20B:
-        raise VerificationError("Windows launcher is not a 64-bit executable.")
+        raise VerificationError(f"{label} is not a 64-bit executable.")
 
     def offset(rva: int) -> int:
         for index in range(sections):
@@ -275,7 +290,7 @@ def verify_windows_launcher_imports(launcher: Path) -> None:
                 location = raw + rva - virtual
                 if location < len(data):
                     return location
-        raise VerificationError("Windows launcher has an invalid import address.")
+        raise VerificationError(f"{label} has an invalid import address.")
 
     imports_rva = struct.unpack_from("<I", data, optional + 112 + 8)[0]
     descriptor = offset(imports_rva)
@@ -286,12 +301,12 @@ def verify_windows_launcher_imports(launcher: Path) -> None:
         start = offset(entry[3])
         end = data.find(b"\0", start, start + 256)
         if end < 0:
-            raise VerificationError("Windows launcher has an invalid import name.")
+            raise VerificationError(f"{label} has an invalid import name.")
         name = data[start:end].decode("ascii").lower()
-        if name.startswith(("vcruntime", "msvcp", "msvcr", "ucrtbase", "libgst", "gstreamer", "glib")):
-            raise VerificationError("Windows launcher depends on an external CRT or media runtime.")
+        if name.startswith(("vcruntime", "msvcp", "msvcr", "ucrtbase", "api-ms-win-crt", "libgst", "gstreamer", "glib", "libglib", "gobject", "libgobject", "gio", "libgio")):
+            raise VerificationError(f"{label} depends on an external CRT or media runtime: {name}")
         descriptor += 20
-    raise VerificationError("Windows launcher has too many import descriptors.")
+    raise VerificationError(f"{label} has too many import descriptors.")
 
 
 def verify_macos_dependencies(root: Path, environment: dict[str, str]) -> None:
@@ -308,6 +323,40 @@ def verify_macos_dependencies(root: Path, environment: dict[str, str]) -> None:
         output = run_captured(["/usr/bin/otool", "-L", *map(str, paths[start:start + 32])], root, environment, "macOS dependency inspection")
         if b"/Library/Frameworks/GStreamer.framework" in output:
             raise VerificationError("A Mach-O binary still depends on the build machine's GStreamer framework.")
+
+
+def matches_cli_version(output: bytes, version: str) -> bool:
+    # Clap currently reports the Cargo package name; accept the public command
+    # name too, while still requiring the complete, exact release version.
+    return output.decode("utf-8", errors="replace").strip() in {
+        f"carplay-cli {version}", f"rustcarplay {version}",
+    }
+
+
+def verify_installed_launch(root: Path, launcher: Path, working: Path, environment: dict[str, str], system: str, version: str) -> None:
+    # Modify only our temporary extraction. Installer builds add this same marker
+    # beside the launcher; actual user data must never be touched by verification.
+    original_log = (root / ".local/logs/launcher.log").read_bytes()
+    with (root / "INSTALLATION.json").open("x", encoding="utf-8") as stream:
+        json.dump({"schema": 1, "mode": "installed", "product": "RustCarPlay"}, stream)
+    output = run_captured([str(launcher), "--cli", "--version"], working, environment, "Installed CLI version check")
+    if not matches_cli_version(output, version):
+        raise VerificationError("The installed CLI did not report the expected release version.")
+    output = run_captured([str(launcher), "--cli", "auth-check"], working, environment, "Installed identity self-check")
+    if b"key_matches_certificate: true" not in output or b"iphone_trust_verified: false" not in output or b"Local consistency passed" not in output:
+        raise VerificationError("Installed identity self-check did not report the expected local-only result.")
+    del output
+    if system == "Windows":
+        data = Path(environment["LOCALAPPDATA"]) / "RustCarPlay"
+    elif system == "Darwin":
+        data = Path(environment["HOME"]) / "Library/Application Support/RustCarPlay"
+    else:
+        data = Path(environment["XDG_DATA_HOME"]) / "rustcarplay"
+    if not (data / ".local/logs/launcher.log").is_file() or not (data / ".local/gstreamer").is_dir():
+        raise VerificationError("Installed mode did not create state in the isolated user data directory.")
+    if (root / ".local/logs/launcher.log").read_bytes() != original_log:
+        raise VerificationError("Installed mode still writes to the application installation directory.")
+    print("Installed launch checks passed using isolated user data and bundled identity paths.")
 
 
 def verify(archive: Path, target: str, gui_smoke: bool) -> None:
@@ -329,11 +378,14 @@ def verify(archive: Path, target: str, gui_smoke: bool) -> None:
         working.mkdir()
         launcher = root / ("RustCarPlay.exe" if system == "Windows" else "RustCarPlay")
         if system == "Windows":
-            verify_windows_launcher_imports(launcher)
+            for executable in [launcher, *(root / f"tools/{name}.exe" for name in ["usb_probe", "usb_mode", "usb_runtime_check"])]:
+                verify_windows_standalone_imports(executable)
+            if launcher.read_bytes() == (root / "app/rustcarplay.exe").read_bytes():
+                raise VerificationError("The Windows launcher and CLI are identical; their build output names must not collide.")
         if system == "Darwin":
             verify_macos_dependencies(root, environment)
         output = run_captured([str(launcher), "--cli", "--version"], working, environment, "CLI version check")
-        if output.decode("utf-8", errors="replace").strip() != f"rustcarplay {version}":
+        if not matches_cli_version(output, version):
             raise VerificationError("The bundled CLI did not report the expected release version.")
         print("Portable CLI version check passed in the isolated runtime environment.")
         output = run_captured([str(launcher), "--cli", "auth-check"], working, environment, "Bundled identity self-check")
@@ -344,6 +396,7 @@ def verify(archive: Path, target: str, gui_smoke: bool) -> None:
         if gui_smoke:
             run_captured([str(launcher), "--smoke-test"], working, environment, "Windows GUI smoke test")
             print("Windows GUI smoke test passed and the test application closed normally.")
+        verify_installed_launch(root, launcher, working, environment, system, version)
         print("Portable archive layout, native manifest and launch verification passed.")
 
 

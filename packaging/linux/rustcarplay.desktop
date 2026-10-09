@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RustCarPlay
+Comment=CarPlay receiver
+Comment[zh_CN]=CarPlay 接收端
+Exec=/usr/bin/rustcarplay
+Icon=rustcarplay
+Terminal=false
+Categories=AudioVideo;Player;
+StartupNotify=true
+Keywords=CarPlay;iPhone;Audio;

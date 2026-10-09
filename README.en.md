@@ -4,7 +4,7 @@
 
 A Rust CarPlay receiver based on [DiPlay](https://github.com/shihabal3amri/DiPlay). Shared Rust code implements the protocols and sessions, native adapters connect to each operating system, **egui / wgpu** provides the desktop UI, and **GStreamer** handles media.
 
-**v0.1.1 is a complete offline package preview.** It includes a launcher, media runtime and fixed experimental authentication material. Extract the archive and start its root launcher. Windows development builds have been tested with one iPhone over wireless and USB; CI and environment validation for these new packages are still in progress. Full DiPlay feature parity and long-running stability remain unfinished.
+**v0.1.1 provides desktop installer previews: Windows Setup, macOS DMG and Ubuntu DEB.** Media runtimes and fixed experimental authentication material are included; portable archives remain available. Windows development builds have been tested with one iPhone over wireless and USB; CI and installation validation are still in progress. Full DiPlay feature parity and long-running stability remain unfinished.
 
 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) · [Development guide](docs/DEVELOPMENT.md) · [Acceptance record](docs/ACCEPTANCE.md) · [Issues](https://github.com/Ezreal-byte/RustCarPlay/issues)
 
@@ -21,8 +21,8 @@ A Rust CarPlay receiver based on [DiPlay](https://github.com/shihabal3amri/DiPla
 | Windows 11 x64 | One iPhone tested: wireless/USB video, touch and audio; USB pause and reconnect also passed an initial user test |
 | Linux x64 / ARM64 | Ubuntu 24.04 / glibc 2.39 baseline; USB, BlueZ and NetworkManager backends implemented, with no physical-device acceptance yet |
 | macOS Intel / Apple Silicon | macOS 15 GUI/core preview, not notarized; native RFCOMM, USB and network configuration adapters are unfinished, so receiver connections are unavailable |
-| Android | Shared-core port planned; Kotlin/JNI shell and platform adapters not implemented |
-| HarmonyOS / NEXT | ArkTS/native bridge planned; required APIs, permissions and device capabilities remain unverified |
+| Android | Not built in this release; Kotlin/JNI shell and platform adapters not implemented |
+| HarmonyOS / NEXT | Not built in this release; ArkTS/native bridge, permissions and device capabilities remain unverified |
 
 A build target does not prove a successful release or working device connection. Check Releases and workflow results for available artifacts. Twenty connection cycles, a two-hour session, Siri/calls, audio device switching and sleep recovery remain unverified.
 
@@ -37,10 +37,17 @@ A build target does not prove a successful release or working device connection.
 
 ## Getting started
 
-1. Choose your OS/architecture from [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) and verify `SHA256SUMS`.
-2. Extract the entire archive into a writable directory. Run **`RustCarPlay.exe`** on Windows or **`./RustCarPlay`** on Linux/macOS from the archive root. Ordinary launch needs no Rust, Python, PowerShell or GStreamer installation and no manually entered certificate directory. Personal settings and pairings are created locally and are not shipped.
-3. Start with LAN on Windows: join the same Wi-Fi on the computer and iPhone, pair Bluetooth in system settings, then connect. No in-app Wi-Fi password is required.
-4. **USB still has system prerequisites.** Windows needs Apple Mobile Device Service, trust/permissions and [device configuration](docs/WINDOWS_USB_DRIVER.md). Preparation scripts still depend on PowerShell 7 and relevant SDK tools; USB is not fully plug-and-play. Linux still needs a system desktop, graphics/audio drivers, BlueZ, NetworkManager, usbmuxd and appropriate permissions. The archive does not install these OS components.
+Download the installer matching your OS and architecture from [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases), then verify `SHA256SUMS`:
+
+| System | Download and installation |
+| --- | --- |
+| Windows 11 x64 | Run `RustCarPlay-0.1.1-windows-x86_64-setup.exe`, then open RustCarPlay from Start; application installation is per-user and needs no administrator privileges |
+| macOS 15 | Choose `RustCarPlay-0.1.1-macos-aarch64.dmg` (Apple Silicon) or `RustCarPlay-0.1.1-macos-x86_64.dmg` (Intel), then drag the app to Applications; GUI/core preview only, with no CarPlay connection support |
+| Ubuntu 24.04 | Run `sudo apt install ./rustcarplay_0.1.1_amd64.deb`; use `rustcarplay_0.1.1_arm64.deb` on ARM64, then launch from the application menu; device connections remain unverified |
+
+Ordinary launch needs no separately installed development tools or GStreamer, and no manual certificate path. Installed applications keep personal settings, pairings and logs in user data directories; uninstalling preserves that data. See the [exact locations](docs/DEVELOPMENT.md#installation-and-personal-data). For portable use, extract the whole ZIP/TAR into a writable directory and run its root `RustCarPlay.exe` or `./RustCarPlay`.
+
+Start with LAN on Windows: join the same Wi-Fi on the computer and iPhone, pair Bluetooth in system settings, then connect without an in-app Wi-Fi password. USB additionally needs Apple Mobile Device Service, trust/permissions and [device configuration](docs/WINDOWS_USB_DRIVER.md); its preparation scripts require PowerShell 7 and SDK signature tools and are not run by the installer. Linux connections require system BlueZ, NetworkManager, usbmuxd and suitable permissions.
 
 The bundled experimental identity comes from the fixed **DiPlay v0.2.15 preview APK**, attributed upstream to **public Carlinkit firmware**. It is not newly issued and is not covered by the source-code GPL license. Public download availability does not establish redistribution permission; distribution suitability and continued acceptance by future iOS releases remain unresolved. The archive includes `resources/auth/provenance.json`; private keys are excluded from Git and source archives. See [third-party notices](docs/THIRD_PARTY_NOTICES.md).
 

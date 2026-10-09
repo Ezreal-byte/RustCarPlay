@@ -41,6 +41,9 @@ impl Platform {
 #[derive(Debug)]
 pub struct LaunchPlan {
     pub root: PathBuf,
+    /// Existing application settings use relative .local paths. Installed
+    /// applications run from the user's data directory to preserve that layout.
+    pub working_directory: PathBuf,
     pub application: PathBuf,
     pub arguments: Vec<OsString>,
     pub cli: bool,
@@ -57,6 +60,25 @@ impl LaunchPlan {
         arguments: Vec<OsString>,
         platform: Platform,
         inherited: &BTreeMap<OsString, OsString>,
+    ) -> Result<Self, String> {
+        let root = launcher_executable
+            .parent()
+            .ok_or("Cannot locate the application directory.")?;
+        Self::build(
+            launcher_executable,
+            arguments,
+            platform,
+            inherited,
+            installed_mode(root)?,
+        )
+    }
+
+    fn build(
+        launcher_executable: &Path,
+        arguments: Vec<OsString>,
+        platform: Platform,
+        inherited: &BTreeMap<OsString, OsString>,
+        installed: bool,
     ) -> Result<Self, String> {
         // Windows environment keys are case insensitive; vars_os commonly
         // reports "Path", while Unix legitimately distinguishes it from PATH.
@@ -75,8 +97,13 @@ impl LaunchPlan {
         }
         let root = launcher_executable
             .parent()
-            .ok_or("Cannot locate the portable application directory.")?
+            .ok_or("Cannot locate the application directory.")?
             .to_path_buf();
+        let working_directory = if installed {
+            user_data_directory(platform, inherited)?
+        } else {
+            root.clone()
+        };
         let cli = arguments
             .first()
             .is_some_and(|argument| argument == "--cli");
@@ -95,7 +122,7 @@ impl LaunchPlan {
             .join(format!("{application_name}{}", platform.suffix()));
         let runtime = root.join("runtime/gstreamer");
         let plugin_directory = runtime.join("lib/gstreamer-1.0");
-        let registry_directory = root.join(".local/gstreamer");
+        let registry_directory = working_directory.join(".local/gstreamer");
         let scanner_name = format!("gst-plugin-scanner{}", platform.suffix());
         let scanner_candidates = [
             runtime.join("libexec/gstreamer-1.0").join(&scanner_name),
@@ -105,10 +132,18 @@ impl LaunchPlan {
         prepend_paths(&mut environment, inherited, "PATH", &[runtime.join("bin")])?;
         match platform {
             Platform::Windows => {
-                environment.insert(
-                    "RUSTCARPLAY_LIBIMOBILEDEVICE_DIR".into(),
-                    root.join("runtime/usb/bin").into_os_string(),
-                );
+                for (variable, relative) in [
+                    ("RUSTCARPLAY_LIBIMOBILEDEVICE_DIR", "runtime/usb/bin"),
+                    ("RUSTCARPLAY_USB_FILTER_DIR", "runtime/usb-filter"),
+                ] {
+                    environment.insert(
+                        variable.into(),
+                        inherited
+                            .get(OsStr::new(variable))
+                            .cloned()
+                            .unwrap_or_else(|| root.join(relative).into_os_string()),
+                    );
+                }
             }
             Platform::Linux => {
                 prepend_paths(
@@ -158,8 +193,9 @@ impl LaunchPlan {
                 .unwrap_or_else(|| root.join("resources/auth").into_os_string()),
         );
         Ok(Self {
-            log_directory: root.join(".local/logs"),
+            log_directory: working_directory.join(".local/logs"),
             root,
+            working_directory,
             application,
             arguments,
             cli,
@@ -204,9 +240,65 @@ impl LaunchPlan {
         let mut command = Command::new(&self.application);
         command
             .args(&self.arguments)
-            .current_dir(&self.root)
+            .current_dir(&self.working_directory)
             .envs(&self.environment);
         command
+    }
+}
+
+fn installed_mode(root: &Path) -> Result<bool, String> {
+    let marker = root.join("INSTALLATION.json");
+    let metadata = match std::fs::metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Cannot read {}: {error}", marker.display())),
+    };
+    if !metadata.is_file() || metadata.len() > 4096 {
+        return Err("The INSTALLATION.json marker is invalid or too large.".into());
+    }
+    let bytes = std::fs::read(&marker)
+        .map_err(|error| format!("Cannot read {}: {error}", marker.display()))?;
+    validate_installation_marker(&bytes)?;
+    Ok(true)
+}
+
+fn validate_installation_marker(bytes: &[u8]) -> Result<(), String> {
+    let marker: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| "The INSTALLATION.json marker is not valid JSON.")?;
+    if marker.get("schema").and_then(serde_json::Value::as_u64) != Some(1)
+        || marker.get("mode").and_then(serde_json::Value::as_str) != Some("installed")
+        || marker.get("product").and_then(serde_json::Value::as_str) != Some("RustCarPlay")
+    {
+        return Err(
+            "The INSTALLATION.json marker has an unsupported schema, mode or product.".into(),
+        );
+    }
+    Ok(())
+}
+
+fn user_data_directory(
+    platform: Platform,
+    inherited: &BTreeMap<OsString, OsString>,
+) -> Result<PathBuf, String> {
+    let absolute_environment = |name: &str| {
+        inherited
+            .get(OsStr::new(name))
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    match platform {
+        Platform::Windows => absolute_environment("LOCALAPPDATA")
+            .map(|path| path.join("RustCarPlay"))
+            .ok_or_else(|| "Installed mode requires an absolute LOCALAPPDATA directory.".into()),
+        Platform::Linux => absolute_environment("XDG_DATA_HOME")
+            .or_else(|| absolute_environment("HOME").map(|home| home.join(".local/share")))
+            .map(|path| path.join("rustcarplay"))
+            .ok_or_else(|| {
+                "Installed mode requires an absolute XDG_DATA_HOME or HOME directory.".into()
+            }),
+        Platform::MacOs => absolute_environment("HOME")
+            .map(|home| home.join("Library/Application Support/RustCarPlay"))
+            .ok_or_else(|| "Installed mode requires an absolute HOME directory.".into()),
     }
 }
 
@@ -290,6 +382,10 @@ mod tests {
         assert_eq!(
             plan.environment[OsStr::new("RUSTCARPLAY_LIBIMOBILEDEVICE_DIR")],
             plan.root.join("runtime/usb/bin")
+        );
+        assert_eq!(
+            plan.environment[OsStr::new("RUSTCARPLAY_USB_FILTER_DIR")],
+            plan.root.join("runtime/usb-filter")
         );
         assert!(!plan.environment.contains_key(OsStr::new("LD_LIBRARY_PATH")));
     }
@@ -403,5 +499,92 @@ mod tests {
                 .unwrap_err()
                 .contains("Application not found")
         );
+    }
+
+    #[test]
+    fn installed_mode_keeps_resources_in_bundle_and_state_in_user_data() {
+        let home = std::env::temp_dir().join("launcher user data 中文");
+        let inherited = BTreeMap::from([
+            (OsString::from("HOME"), home.clone().into_os_string()),
+            (
+                OsString::from("LocalAppData"),
+                home.clone().into_os_string(),
+            ),
+            (
+                OsString::from("XDG_DATA_HOME"),
+                home.join("xdg").into_os_string(),
+            ),
+        ]);
+        for (platform, expected) in [
+            (Platform::Windows, home.join("RustCarPlay")),
+            (Platform::Linux, home.join("xdg/rustcarplay")),
+            (
+                Platform::MacOs,
+                home.join("Library/Application Support/RustCarPlay"),
+            ),
+        ] {
+            let plan =
+                LaunchPlan::build(&executable(), vec![], platform, &inherited, true).unwrap();
+            assert_eq!(plan.working_directory, expected);
+            assert_eq!(plan.command().get_current_dir(), Some(expected.as_path()));
+            assert_eq!(plan.log_directory, expected.join(".local/logs"));
+            assert_eq!(plan.registry_directory, expected.join(".local/gstreamer"));
+            assert_eq!(
+                plan.environment[OsStr::new("RUSTCARPLAY_AUTH_DIR")],
+                plan.root.join("resources/auth")
+            );
+            assert!(plan.plugin_directory.starts_with(&plan.root));
+            assert!(plan.application.starts_with(&plan.root));
+        }
+    }
+
+    #[test]
+    fn installed_linux_ignores_relative_xdg_path_and_uses_home() {
+        let home = std::env::temp_dir().join("launcher user");
+        let inherited = BTreeMap::from([
+            (OsString::from("HOME"), home.clone().into_os_string()),
+            (
+                OsString::from("XDG_DATA_HOME"),
+                OsString::from("relative-ignored"),
+            ),
+        ]);
+        let plan =
+            LaunchPlan::build(&executable(), vec![], Platform::Linux, &inherited, true).unwrap();
+        assert_eq!(
+            plan.working_directory,
+            home.join(".local/share/rustcarplay")
+        );
+    }
+
+    #[test]
+    fn missing_user_data_path_never_falls_back_to_installation_directory() {
+        for platform in [Platform::Windows, Platform::Linux, Platform::MacOs] {
+            assert!(
+                LaunchPlan::build(&executable(), vec![], platform, &BTreeMap::new(), true).is_err()
+            );
+            assert_eq!(
+                plan(platform, &[]).working_directory,
+                executable().parent().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn installation_marker_is_validated_instead_of_silently_using_portable_mode() {
+        assert!(
+            validate_installation_marker(
+                br#"{"schema":1,"mode":"installed","product":"RustCarPlay","version":"0.1.1"}"#
+            )
+            .is_ok()
+        );
+        for invalid in [
+            br#"{"schema":true,"mode":"installed","product":"RustCarPlay"}"#.as_slice(),
+            br#"{"schema":2,"mode":"installed","product":"RustCarPlay"}"#,
+            br#"{"schema":1,"mode":"portable","product":"RustCarPlay"}"#,
+            br#"{"schema":1,"mode":"installed","product":"other"}"#,
+            b"not json",
+        ] {
+            assert!(validate_installation_marker(invalid).is_err());
+        }
     }
 }

@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -16,6 +17,7 @@ import tarfile
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -158,18 +160,70 @@ def microsoft_license(cache: Path, destination: Path) -> dict:
             "redistribution_terms": "https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files"}
 
 
-def usb_sources(manifest: dict, cache: Path, output: Path, version: str) -> dict:
+def validate_msys_allsource(path: Path) -> dict:
+    """Accept complete upstream tarballs or a complete pinned bare Git source.
+
+    winpthreads uses a Git source in makepkg. Inspect objects only, ignoring the
+    downloaded repository's config and hooks, and never execute PKGBUILD.
+    """
+    listing = subprocess.check_output(["tar", "-tf", str(path)], text=True).splitlines()
+    recipes = [name for name in listing if name.endswith("/PKGBUILD")]
+    if len(recipes) != 1:
+        raise RuntimeError(f"MSYS2 source has no unique build recipe: {path.name}")
+    archives = [name for name in listing if name.endswith((".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".zip"))]
+    if archives:
+        return {"upstream_archives": archives}
+    srcinfo = recipes[0].rsplit("/", 1)[0] + "/.SRCINFO"
+    metadata = subprocess.check_output(["tar", "-xOf", str(path), srcinfo], text=True)
+    commits = set(re.findall(r"#commit=([0-9a-f]{40})", metadata))
+    repositories = [name.removesuffix("/HEAD") for name in listing if name.endswith("/HEAD")
+                    and name.removesuffix("HEAD") + "objects/" in listing]
+    if len(commits) != 1 or len(repositories) != 1:
+        raise RuntimeError(f"MSYS2 package has no complete upstream archive or pinned Git source: {path.name}")
+    repository, commit = repositories[0], commits.pop()
+    with tempfile.TemporaryDirectory(prefix="rustcarplay-source-git-") as temporary:
+        target = Path(temporary)
+        (target / "config").write_text("[core]\n bare = true\n", encoding="ascii")
+        (target / "HEAD").write_text(commit + "\n", encoding="ascii")
+        (target / "refs").mkdir()
+        (target / "objects").mkdir()
+        for name in listing:
+            if not name.startswith(repository + "/objects/") or name.endswith("/"):
+                continue
+            relative = PurePosixPath(name.removeprefix(repository + "/"))
+            if any(part in ("..", ".") for part in relative.parts) or relative.is_absolute():
+                raise RuntimeError("Invalid Git object path in source archive")
+            if not re.fullmatch(r"objects/(?:[0-9a-f]{2}/[0-9a-f]{38}|pack/pack-[0-9a-f]{40}\.(?:pack|idx|rev))", relative.as_posix()):
+                continue  # Never consume alternates/promisor/config files.
+            destination = target.joinpath(*relative.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with destination.open("wb") as output:
+                subprocess.run(["tar", "-xOf", str(path), name], stdout=output, check=True)
+        # git archive walks every referenced tree and blob; a recipes-only,
+        # shallow/missing-object, or wrong-commit archive therefore fails.
+        subprocess.run(["git", "--no-replace-objects", "--git-dir=" + temporary,
+                        "-c", "core.hooksPath=", "archive", "--format=tar", commit],
+                       stdout=subprocess.DEVNULL, check=True)
+    return {"git_commit": commit, "git_source_complete": True}
+
+
+def usb_sources(manifest: dict, cache: Path, output: Path, version: str,
+                extra_archives: list[tuple[Path, dict]] | None = None) -> dict:
     files = {}
+    payloads = {}
     for package in manifest["packages"]:
         url = package["source"]
         name = url.rsplit("/", 1)[1]
         if name not in files:
             path = download(url, cache / "msys2" / name)
-            # MSYS2 allsource packages must include source payloads, not just PKGBUILD.
-            listing = subprocess.check_output(["tar", "-tf", str(path)], text=True).splitlines()
-            if not any(n.endswith((".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".zip")) for n in listing):
-                raise RuntimeError(f"MSYS2 package contains recipes without complete original source: {name}")
-            files[name] = source_record(path, url)
+            verification = validate_msys_allsource(path)
+            files[name] = {**source_record(path, url), **verification}
+            payloads[name] = path
+    for path, record in extra_archives or []:
+        if path.name in files or record["sha256"] != sha256(path):
+            raise RuntimeError("Duplicate or inconsistent additional corresponding source")
+        files[path.name] = record
+        payloads[path.name] = path
     output.mkdir(parents=True, exist_ok=True)
     target = output / f"RustCarPlay-{version}-native-source-windows-x86_64.tar.gz"
     index = {"schema": 1, "packages": manifest["packages"], "source_archives": list(files.values()),
@@ -180,17 +234,21 @@ def usb_sources(manifest: dict, cache: Path, output: Path, version: str) -> dict
         info.size = len(body)
         archive.addfile(info, io.BytesIO(body))
         for name in sorted(files):
-            archive.add(cache / "msys2" / name, arcname="sources/" + name)
+            archive.add(payloads[name], arcname="sources/" + name)
     return {"file": target.name, "sha256": sha256(target), "bytes": target.stat().st_size,
             "source_archives": list(files.values())}
 
 
-def dsc_artifacts(directory: Path) -> list[Path]:
+def dsc_artifacts(directory: Path, source: tuple[str, str] | None = None) -> list[Path]:
     descriptors = list(directory.glob("*.dsc"))
     if len(descriptors) != 1:
         raise RuntimeError(f"Expected exactly one Debian source descriptor in {directory.name}")
     descriptor = descriptors[0]
     text = descriptor.read_text(encoding="utf-8")
+    if source is not None:
+        fields = dict(re.findall(r"^(Source|Version): (.+)$", text, re.MULTILINE))
+        if (fields.get("Source"), fields.get("Version")) != source:
+            raise RuntimeError("Debian source descriptor does not match the installed binary's exact source version")
     match = re.search(r"^Checksums-Sha256:\n((?: [^\n]+\n)+)", text, re.MULTILINE)
     if match is None:
         raise RuntimeError("Debian .dsc has no SHA-256 source file list")
@@ -206,6 +264,60 @@ def dsc_artifacts(directory: Path) -> list[Path]:
     return result
 
 
+def parse_apt_source_uris(output: str) -> list[str]:
+    """Preserve APT transport URIs; mirror+file is not an HTTP download URL."""
+    uris = []
+    for line in output.splitlines():
+        if not line.startswith("'"):
+            continue
+        match = re.fullmatch(r"'([^'\s]+)'\s+(\S+)\s+\d+(?:\s+\S+)?\s*", line)
+        if match is None:
+            raise RuntimeError("Malformed apt source URI record")
+        uri, filename = match.groups()
+        if not re.match(r"(?:https?|file|copy|mirror(?:\+(?:https?|file))?):", uri):
+            raise RuntimeError("Unsupported apt source transport: " + uri.split(":", 1)[0])
+        if filename in (".", "..") or "/" in filename or "\\" in filename:
+            raise RuntimeError("Invalid apt source filename")
+        uris.append(uri)
+    if not uris:
+        raise RuntimeError("apt returned no source locations; enable matching deb-src repositories")
+    return uris
+
+
+def apt_source_locations(name: str, version: str) -> list[str]:
+    """Query the authenticated index for this exact source, never the latest one."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9+.-]*", name) or not re.fullmatch(r"[A-Za-z0-9.+:~\-]+", version):
+        raise ValueError("Invalid Debian source package or version")
+    command = ["apt-get", "source", "--download-only", "--only-source", name + "=" + version, "--print-uris"]
+    # An empty directory prevents apt from eliding URLs for already cached files.
+    with tempfile.TemporaryDirectory(prefix="rustcarplay-apt-uris-") as temporary:
+        output = subprocess.check_output(command, cwd=temporary, text=True, stderr=subprocess.PIPE,
+                                         env={**os.environ, "LC_ALL": "C"}, timeout=120)
+    return parse_apt_source_uris(output)
+
+
+def apt_local_mirror_lists(uris: list[str]) -> list[dict]:
+    """Keep hosted-runner mirror choices alongside their machine-local URI."""
+    lists = {}
+    for uri in uris:
+        if not uri.startswith("mirror+file:"):
+            continue
+        path = Path(urllib.parse.unquote(uri.removeprefix("mirror+file:")))
+        mirror = next((parent for parent in path.parents if parent.is_file()), None)
+        if mirror is None:
+            raise RuntimeError("The APT local mirror list is missing: " + uri)
+        if mirror.stat().st_size > 64 * 1024:
+            raise RuntimeError("The APT local mirror list is unexpectedly large")
+        prefix = "mirror+file:" + mirror.as_posix()
+        if prefix not in lists:
+            # These are mirror definitions, not a claim that every mirror was
+            # used. APT selects and authenticates the actual download.
+            entries = [line.strip() for line in mirror.read_text(encoding="utf-8").splitlines()
+                       if line.strip() and not line.lstrip().startswith("#")]
+            lists[prefix] = {"uri_prefix": prefix, "entries": entries}
+    return list(lists.values())
+
+
 def debian_sources(packages: list[dict], cache: Path, output: Path, version: str, label: str) -> dict:
     records = []
     payloads = []
@@ -213,17 +325,12 @@ def debian_sources(packages: list[dict], cache: Path, output: Path, version: str
         directory = cache / "ubuntu" / re.sub(r"[^A-Za-z0-9.+_-]", "_", name + "-" + source_version)
         directory.mkdir(parents=True, exist_ok=True)
         command = ["apt-get", "source", "--download-only", "--only-source", name + "=" + source_version]
-        # Record the authenticated apt index's exact download locations too.
-        # An empty directory prevents apt from eliding URLs for cached files.
-        with tempfile.TemporaryDirectory(prefix="rustcarplay-apt-uris-") as temporary:
-            locations = subprocess.check_output(command + ["--print-uris"], cwd=temporary, text=True)
-        urls = re.findall(r"^'(https?://[^']+)'", locations, re.MULTILINE)
-        if not urls:
-            raise RuntimeError(f"apt returned no source locations for {name}={source_version}; enable deb-src")
+        urls = apt_source_locations(name, source_version)
         if not list(directory.glob("*.dsc")):
             subprocess.run(command, cwd=directory, check=True)
-        artifacts = dsc_artifacts(directory)
+        artifacts = dsc_artifacts(directory, (name, source_version))
         records.append({"name": name, "version": source_version, "urls": urls,
+                        "apt_mirror_lists": apt_local_mirror_lists(urls),
                         "files": [{"file": p.name, "sha256": sha256(p), "bytes": p.stat().st_size} for p in artifacts]})
         payloads.extend((path, "sources/" + directory.name + "/" + path.name) for path in artifacts)
     target = output / f"RustCarPlay-{version}-native-source-{label}.tar.gz"

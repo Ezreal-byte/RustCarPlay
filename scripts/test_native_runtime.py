@@ -2,8 +2,12 @@
 import hashlib
 import importlib.util
 import io
+import json
+import os
 from pathlib import Path
+import shutil
 import struct
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -15,8 +19,198 @@ SPEC = importlib.util.spec_from_file_location("native_bundle", Path(__file__).wi
 bundle = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bundle)
 
+LINUX_SPEC = importlib.util.spec_from_file_location("ci_linux_native", Path(__file__).with_name("ci-linux-native.py"))
+linux_ci = importlib.util.module_from_spec(LINUX_SPEC)
+LINUX_SPEC.loader.exec_module(linux_ci)
+
 
 class NativeRuntimeTests(unittest.TestCase):
+    def test_apt_source_uris_preserve_mirror_transports_and_validate_records(self):
+        uris = ["mirror+file:/etc/apt/apt-mirrors.txt/pool/main/f/freetype/freetype_1.0.dsc",
+                "mirror+http://example.invalid/mirrors/pool/main/f/freetype/freetype_1.0.orig.tar.xz",
+                "mirror+https://example.invalid/mirrors/pool/main/f/freetype/freetype_1.0.debian.tar.xz",
+                "http://ports.ubuntu.com/ubuntu-ports/pool/main/a/alsa-lib/alsa-lib_1.0.dsc",
+                "https://archive.ubuntu.com/ubuntu/pool/main/a/alsa-lib/alsa-lib_1.0.dsc"]
+        output = "Reading package lists...\n" + "\n".join(f"'{uri}' file-{index}.tar.xz 123 SHA256:abcd" for index, uri in enumerate(uris))
+        self.assertEqual(sources.parse_apt_source_uris(output), uris)
+        for record, message in (("'http://example.invalid/f' ../f 12 SHA256:abcd", "Invalid apt source filename"),
+                                ("'javascript:bad' f 12 SHA256:abcd", "Unsupported apt source transport"),
+                                ("'http://example.invalid/f' f invalid SHA256:abcd", "Malformed apt source URI record"),
+                                ("Reading package lists...\n", "no source locations")):
+            with self.subTest(record=record), self.assertRaisesRegex(RuntimeError, message):
+                sources.parse_apt_source_uris(record)
+
+    def test_apt_source_query_pins_source_version_in_an_empty_directory(self):
+        def query(command, **kwargs):
+            self.assertIn("freetype=2.13.2+dfsg-1ubuntu0.2", command)
+            self.assertIn("--only-source", command)
+            self.assertEqual(command[-1], "--print-uris")
+            self.assertEqual(list(Path(kwargs["cwd"]).iterdir()), [])
+            return "'mirror+file:/etc/apt/apt-mirrors.txt/pool/freetype_2.13.2.dsc' freetype_2.13.2.dsc 100 SHA256:abcd\n"
+        with patch.object(sources.subprocess, "check_output", side_effect=query):
+            self.assertEqual(len(sources.apt_source_locations("freetype", "2.13.2+dfsg-1ubuntu0.2")), 1)
+
+    def test_debian_source_descriptor_must_match_exact_binary_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            payload = folder / "freetype.tar.xz"
+            payload.write_bytes(b"synthetic complete source")
+            descriptor = folder / "freetype.dsc"
+            descriptor.write_text("Source: freetype\nVersion: 2.13.2+dfsg-1ubuntu0.2\nChecksums-Sha256:\n "
+                                  + sources.sha256(payload) + " " + str(payload.stat().st_size) + " freetype.tar.xz\n", encoding="utf-8")
+            self.assertEqual(len(sources.dsc_artifacts(folder, ("freetype", "2.13.2+dfsg-1ubuntu0.2"))), 2)
+            with self.assertRaisesRegex(RuntimeError, "does not match"):
+                sources.dsc_artifacts(folder, ("freetype", "2.13.2+dfsg-1ubuntu0.1"))
+
+    def test_debian_mirror_source_bundle_records_urls_mirror_choices_and_exact_payloads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mirror = root / "apt-mirrors.txt"
+            mirror.write_text("# fixture mirror list\nhttps://archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://azure.archive.ubuntu.com/ubuntu/\tpriority:2\n", encoding="utf-8")
+            uri = "mirror+file:" + mirror.as_posix() + "/pool/main/f/fixture/fixture_1.0-2.dsc"
+            locations = "'" + uri + "' fixture_1.0-2.dsc 100 SHA256:abcd\n"
+            def download(command, **kwargs):
+                self.assertEqual(command[-1], "fixture=1.0-2")
+                folder = Path(kwargs["cwd"])
+                payload = folder / "fixture_1.0.orig.tar.xz"
+                payload.write_bytes(b"synthetic source archive")
+                (folder / "fixture_1.0-2.dsc").write_text("Source: fixture\nVersion: 1.0-2\nChecksums-Sha256:\n "
+                    + sources.sha256(payload) + " " + str(payload.stat().st_size) + " " + payload.name + "\n", encoding="utf-8")
+            packages = [{"binary_package": "libfixture1:amd64", "binary_version": "1.0-2", "source_package": "fixture", "source_version": "1.0-2"}]
+            with patch.object(sources.subprocess, "check_output", return_value=locations), \
+                 patch.object(sources.subprocess, "run", side_effect=download) as command:
+                result = sources.debian_sources(packages, root / "cache", root / "dist", "0.1.1", "linux-x86_64")
+            command.assert_called_once()
+            with tarfile.open(root / "dist" / result["file"]) as archive:
+                manifest = json.load(archive.extractfile("SOURCE-MANIFEST.json"))
+                self.assertEqual(manifest["binary_packages"], packages)
+                source = manifest["source_packages"][0]
+                self.assertEqual(source["version"], "1.0-2")
+                self.assertEqual(source["urls"], [uri])
+                self.assertEqual(len(source["apt_mirror_lists"][0]["entries"]), 2)
+                self.assertEqual(len(source["files"]), 2)
+                self.assertEqual(len(archive.getmembers()), 3)
+
+    def test_linux_preflight_follows_actual_elf_owners_without_upgrading_system_baseline(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plugin, codec, config = [root / name for name in ("plugin.so", "libcodec.so.1", "alsa.conf")]
+            for path in (plugin, codec, config):
+                path.write_bytes(b"fixture")
+            owners = {plugin: "plugins:amd64", codec: "codec:amd64", config: "alsa-data"}
+            def run(command):
+                if command[0] == "ldd":
+                    if command[1] == str(plugin):
+                        # Use the ldd parser fixture below to avoid host path conventions.
+                        return "plugin dependencies"
+                    return "codec dependencies"
+                self.assertEqual(command[0], "dpkg-query")
+                binary = command[-1]
+                return "\t".join((binary, "1.0", binary.split(":")[0], "1.0"))
+            def dependencies(output):
+                if output == "plugin dependencies":
+                    return {"libcodec.so.1": codec, "libc.so.6": root / "system-libc", "libEGL.so.1": root / "system-driver"}
+                return {}
+            with patch.object(linux_ci, "native_inputs", return_value=([plugin], [config])), \
+                 patch.object(linux_ci.bundle, "dpkg_owner", side_effect=lambda path: owners[path]) as owner, \
+                 patch.object(linux_ci.bundle, "parse_ldd", side_effect=dependencies), \
+                 patch.object(linux_ci, "run", side_effect=run):
+                packages = linux_ci.installed_packages("x86_64-unknown-linux-gnu")
+            self.assertEqual({package["binary_package"] for package in packages}, {"plugins:amd64", "codec:amd64", "alsa-data"})
+            self.assertEqual(owner.call_count, 3)
+
+    def test_linux_alignment_upgrades_only_owners_of_unavailable_exact_sources(self):
+        old = {"binary_package": "libfreetype6:arm64", "binary_version": "1.0-1", "source_package": "freetype", "source_version": "1.0-1"}
+        new = {**old, "binary_version": "1.0-2", "source_version": "1.0-2"}
+        unchanged = {"binary_package": "libopus0:arm64", "binary_version": "1.0", "source_package": "opus", "source_version": "1.0"}
+        introduced = {"binary_package": "libbrotli1:arm64", "binary_version": "2.0", "source_package": "brotli", "source_version": "2.0"}
+        events = []
+        def locations(name, version):
+            events.append(("source", name, version))
+            if (name, version) == ("freetype", "1.0-1"):
+                raise subprocess.CalledProcessError(100, ["apt-get"])
+            return ["http://example.invalid/" + name + "_" + version + ".dsc"]
+        def upgrade(packages):
+            self.assertEqual(packages, [new])
+            self.assertIn(("source", "freetype", "1.0-2"), events)
+            events.append(("upgrade",))
+        with patch.object(linux_ci, "installed_packages", side_effect=[[old, unchanged], [new, unchanged, introduced]]), \
+             patch.object(linux_ci, "candidate_package", return_value=new) as candidate, \
+             patch.object(linux_ci, "apt_source_locations", side_effect=locations), \
+             patch.object(linux_ci, "upgrade_packages", side_effect=upgrade):
+            report = linux_ci.align_sources("aarch64-unknown-linux-gnu", True)
+        candidate.assert_called_once_with(old)
+        self.assertEqual(report["binary_packages"], [new, unchanged, introduced])
+        self.assertIn(("source", "brotli", "2.0"), events)
+        self.assertNotIn({"name": "freetype", "version": "1.0-1"}, report["sources"])
+        self.assertEqual(len(report["upgrades"]), 1)
+
+    def test_linux_alignment_never_upgrades_to_a_candidate_without_exact_source(self):
+        package = {"binary_package": "libfreetype6:amd64", "binary_version": "1", "source_package": "freetype", "source_version": "1"}
+        new = {**package, "binary_version": "2", "source_version": "2"}
+        with patch.object(linux_ci, "installed_packages", return_value=[package]), \
+             patch.object(linux_ci, "candidate_package", return_value=new), \
+             patch.object(linux_ci, "apt_source_locations", side_effect=subprocess.CalledProcessError(100, ["apt-get"])), \
+             patch.object(linux_ci, "upgrade_packages") as upgrade:
+            with self.assertRaisesRegex(RuntimeError, "Exact source versions unavailable"):
+                linux_ci.align_sources("x86_64-unknown-linux-gnu", False)
+            with self.assertRaises(subprocess.CalledProcessError):
+                linux_ci.align_sources("x86_64-unknown-linux-gnu", True)
+            upgrade.assert_not_called()
+
+    def test_linux_candidate_metadata_tracks_source_versions_and_rejects_no_upgrade(self):
+        package = {"binary_package": "libfreetype6:arm64", "binary_version": "1.0-1", "source_package": "freetype", "source_version": "1.0-1"}
+        with patch.object(linux_ci, "run", side_effect=["  Candidate: 1.0-2+b1\n", "Package: libfreetype6\nVersion: 1.0-2+b1\nSource: freetype (1.0-2)\n"]), \
+             patch.object(linux_ci.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+            result = linux_ci.candidate_package(package)
+            self.assertEqual(result["binary_version"], "1.0-2+b1")
+            self.assertEqual(result["source_version"], "1.0-2")
+        with patch.object(linux_ci, "run", return_value="  Candidate: 1.0-1\n"), \
+             patch.object(linux_ci.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
+            with self.assertRaisesRegex(RuntimeError, "No newer candidate"):
+                linux_ci.candidate_package(package)
+
+    def test_linux_upgrade_is_ci_only_pinned_and_cannot_remove_packages(self):
+        package = {"binary_package": "libfreetype6:amd64", "binary_version": "1.0-2"}
+        with patch.dict(os.environ, {"GITHUB_ACTIONS": "false"}), patch.object(linux_ci.subprocess, "run") as command:
+            with self.assertRaisesRegex(RuntimeError, "restricted to GitHub Actions"):
+                linux_ci.upgrade_packages([package])
+            command.assert_not_called()
+        with patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), patch.object(linux_ci.subprocess, "run") as command:
+            linux_ci.upgrade_packages([package])
+            args = command.call_args.args[0]
+            self.assertEqual(args[-1], "libfreetype6:amd64=1.0-2")
+            for flag in ("--only-upgrade", "--no-remove", "--no-install-recommends"):
+                self.assertIn(flag, args)
+            self.assertNotIn("upgrade", args)
+
+    @unittest.skipUnless(shutil.which("git") and shutil.which("tar"), "Git and tar are needed for bare source verification")
+    def test_msys_vcs_source_is_verified_offline_without_running_recipe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            repository = folder / "upstream"
+            repository.mkdir()
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            (repository / "COPYING").write_text("fixture source license\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repository), "add", "COPYING"], check=True)
+            subprocess.run(["git", "-C", str(repository), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                            "-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "commit", "-qm", "fixture"], check=True)
+            commit = subprocess.check_output(["git", "-C", str(repository), "rev-parse", "HEAD"], text=True).strip()
+            package = folder / "package"
+            package.mkdir()
+            (package / "PKGBUILD").write_text("exit 99 # must never execute\n", encoding="utf-8")
+            (package / ".SRCINFO").write_text("source = upstream::git+https://example.invalid/upstream#commit=" + commit + "\n", encoding="utf-8")
+            archive_path = folder / "allsource.tar"
+            with tarfile.open(archive_path, "w") as archive:
+                archive.add(package, arcname="package")
+                archive.add(repository / ".git", arcname="package/upstream")
+            result = sources.validate_msys_allsource(archive_path)
+            self.assertEqual(result, {"git_commit": commit, "git_source_complete": True})
+            with tarfile.open(archive_path, "w") as archive:
+                archive.add(package, arcname="package")
+            with self.assertRaisesRegex(RuntimeError, "no complete upstream"):
+                sources.validate_msys_allsource(archive_path)
+
     def test_elf_closure_preserves_dependency_names_and_rejects_missing_libraries(self):
         parsed = bundle.parse_ldd("""linux-vdso.so.1 (0x1234)
         libgstapp-1.0.so.0 => /lib/x86_64-linux-gnu/libgstapp-1.0.so.0 (0x1234)
@@ -107,6 +301,109 @@ Load command 1
 """
         with patch.object(bundle, "run", return_value=output):
             self.assertEqual(bundle.macho_rpaths(Path("universal.dylib")), ["/Library/Frameworks/GStreamer.framework/Versions/1.0/lib"])
+
+    def test_macho_rpath_uses_declared_nested_backend_before_top_level_library(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            prefix, destination = folder / "SDK", folder / "runtime/gstreamer"
+            nested = destination / "lib/libproxy/libpxbackend-1.0.dylib"
+            nested.parent.mkdir(parents=True)
+            nested.write_bytes(b"nested backend")
+            (destination / "lib/libpxbackend-1.0.dylib").write_bytes(b"wrong same-name library")
+            image = destination / "lib/libproxy.1.dylib"
+            for rpath in (str(prefix / "lib/libproxy"), "@loader_path/libproxy",
+                          "/Library/Frameworks/GStreamer.framework/Versions/Current/lib/libproxy"):
+                with self.subTest(rpath=rpath):
+                    resolved = bundle.resolve_macho_dependency(
+                        "@rpath/libpxbackend-1.0.dylib", image,
+                        [rpath], prefix, destination)
+                    self.assertEqual(resolved, nested.resolve())
+
+    def test_macho_rpath_order_and_inherited_common_library_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            prefix, destination = folder / "SDK", folder / "runtime/gstreamer"
+            for subdirectory in ("first", "second", ""):
+                path = destination / "lib" / subdirectory / "libfixture.dylib"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(subdirectory.encode() or b"common")
+            image = destination / "lib/libconsumer.dylib"
+            ordered = [str(prefix / "lib/second"), str(prefix / "lib/first")]
+            self.assertEqual(bundle.resolve_macho_dependency(
+                "@rpath/libfixture.dylib", image, ordered, prefix, destination),
+                (destination / "lib/second/libfixture.dylib").resolve())
+            self.assertEqual(bundle.resolve_macho_dependency(
+                "@rpath/libfixture.dylib", image, [], prefix, destination),
+                (destination / "lib/libfixture.dylib").resolve())
+
+    def test_macho_never_resolves_a_missing_private_library_from_the_sdk(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            prefix, destination = folder / "SDK", folder / "runtime/gstreamer"
+            original = prefix / "lib/libproxy/libpxbackend-1.0.dylib"
+            original.parent.mkdir(parents=True)
+            original.write_bytes(b"only installed on developer machine")
+            image = destination / "lib/libproxy.1.dylib"
+            for dependency, rpaths in (
+                ("@rpath/libpxbackend-1.0.dylib", [str(original.parent)]),
+                (str(original), []),
+                ("@loader_path/../../../SDK/lib/libproxy/libpxbackend-1.0.dylib", []),
+            ):
+                with self.subTest(dependency=dependency), self.assertRaisesRegex(RuntimeError, "private Mach-O"):
+                    bundle.resolve_macho_dependency(dependency, image, rpaths, prefix, destination)
+
+    def test_macos_relocation_rewrites_nested_libproxy_and_removes_sdk_rpath(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            prefix, runtime = folder / "SDK", folder / "runtime"
+            for name in ("lib/libproxy.1.dylib", "lib/libproxy/libpxbackend-1.0.dylib",
+                         "lib/gstreamer-1.0/libgstosxaudio.dylib", "bin/gst-inspect-1.0",
+                         "bin/gst-launch-1.0", "libexec/gstreamer-1.0/gst-plugin-scanner"):
+                path = prefix / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"\xcf\xfa\xed\xfe" + b"fixture")
+            original_rpath = str(prefix / "lib/libproxy")
+            dependency = "@rpath/libpxbackend-1.0.dylib"
+            with patch.object(bundle.platform, "system", return_value="Darwin"), \
+                    patch.object(bundle, "PLUGINS", ()), \
+                    patch.object(bundle, "macho_dependencies", side_effect=lambda path: {dependency} if path.name == "libproxy.1.dylib" else set()), \
+                    patch.object(bundle, "macho_rpaths", side_effect=lambda path: [original_rpath] if path.name == "libproxy.1.dylib" else []), \
+                    patch.object(bundle, "run", return_value="") as commands:
+                bundle.macos_runtime(prefix, runtime, [])
+            relocation = next(call.args[0] for call in commands.call_args_list
+                              if call.args[0][0] == "install_name_tool"
+                              and call.args[0][-1].name == "libproxy.1.dylib")
+            self.assertEqual(relocation[1:4], ["-change", dependency, "@loader_path/libproxy/libpxbackend-1.0.dylib"])
+            self.assertIn("-delete_rpath", relocation)
+            self.assertIn(original_rpath, relocation)
+
+    def test_macos_nested_dylib_install_id_is_not_treated_as_a_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            prefix, runtime = folder / "SDK", folder / "runtime"
+            for name in ("lib/libproxy/libpxbackend-1.0.dylib",
+                         "lib/gstreamer-1.0/libgstosxaudio.dylib", "bin/gst-inspect-1.0",
+                         "bin/gst-launch-1.0", "libexec/gstreamer-1.0/gst-plugin-scanner"):
+                path = prefix / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"\xcf\xfa\xed\xfe" + b"fixture")
+            install_id = "@rpath/libpxbackend-1.0.dylib"
+
+            def commands(arguments):
+                if arguments[:2] == ["otool", "-D"] and arguments[-1].name == "libpxbackend-1.0.dylib":
+                    return f"{arguments[-1]} (architecture x86_64):\n{install_id}\n{arguments[-1]} (architecture arm64):\n{install_id}\n"
+                return ""
+
+            with patch.object(bundle.platform, "system", return_value="Darwin"), \
+                    patch.object(bundle, "PLUGINS", ()), \
+                    patch.object(bundle, "macho_dependencies", side_effect=lambda path: {install_id} if path.name == "libpxbackend-1.0.dylib" else set()), \
+                    patch.object(bundle, "macho_rpaths", return_value=[]), \
+                    patch.object(bundle, "run", side_effect=commands) as calls:
+                bundle.macos_runtime(prefix, runtime, [])
+            relocation = next(call.args[0] for call in calls.call_args_list
+                              if call.args[0][0] == "install_name_tool"
+                              and call.args[0][-1].name == "libpxbackend-1.0.dylib")
+            self.assertEqual(relocation[1:-1], ["-id", "@loader_path/libpxbackend-1.0.dylib"])
 
 
 if __name__ == "__main__":

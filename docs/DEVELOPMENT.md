@@ -2,30 +2,49 @@
 
 [中文首页](../README.md) · [English overview](../README.en.md) · [English quickstart](#english-quickstart)
 
-本文保留完整开发与连接说明，开发命令默认在仓库根目录执行。v0.1.1 改为包含媒体运行时和实验认证材料的离线包；此前 v0.1.0 的外部运行时方案见[历史发布说明](releases/v0.1.0.md)。产物、对应源码和 `SHA256SUMS` 以 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) 为准。本轮离线包 CI 与环境验证仍在进行，不能把既有开发环境真机结果等同于新包已在干净系统验证。
+本文保留完整开发与连接说明，开发命令默认在仓库根目录执行。v0.1.1 提供包含媒体运行时和实验认证材料的桌面安装包，并保留便携包；此前 v0.1.0 的外部运行时方案见[历史发布说明](releases/v0.1.0.md)。产物、对应源码和 `SHA256SUMS` 以 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) 为准。本轮 CI 与安装环境验证仍在进行，不能把既有开发环境真机结果等同于新包已在干净系统验证。
 
 基于 [DiPlay](https://github.com/shihabal3amri/DiPlay) `9e244d958afe6b8fd79ade49769ce25a944f397b` 的 Rust 跨平台接收端移植。协议核心不依赖 Android，桌面使用 egui/wgpu 和 GStreamer。
 
 **当前是正在进行真机验证的开发原型，尚未完成 DiPlay 的全部功能，也没有通过 Windows/Linux 完整 CarPlay 验收。** 编译、协议测试、localhost 加密会话测试和合成媒体解码，不等同于 iPhone 互操作验证。详见 [验收与缺口](ACCEPTANCE.md)。如需对照，可将固定版本的上游源码另行检出至被忽略的 `DiPlay/` 目录；公开仓库与本 Cargo workspace 不包含该副本。
 
-## 使用 v0.1.1 离线包
+## 使用 v0.1.1 安装包与便携包
 
-下载对应系统和架构的完整压缩包，核对摘要后解压到可写目录。Windows 双击根目录 `RustCarPlay.exe`，Linux/macOS 执行 `./RustCarPlay`。普通启动无需安装 Rust、Python、PowerShell 或 GStreamer，也无需手填认证目录。启动器为子进程设置包内库、插件和认证路径，不修改系统 PATH，不自动提权或安装驱动。
+优先下载对应系统和架构的安装包，核对 `SHA256SUMS` 后安装：Windows 运行 `RustCarPlay-0.1.1-windows-x86_64-setup.exe`；macOS 打开对应 Intel/Apple Silicon 的 DMG，将应用拖入 Applications；Ubuntu 24.04 使用 `sudo apt install ./rustcarplay_0.1.1_amd64.deb`，ARM64 文件名为 `rustcarplay_0.1.1_arm64.deb`。安装后从系统应用菜单打开。macOS 当前仅供 GUI/核心预览，不具备 CarPlay 连接能力。
+
+普通启动无需安装 Rust、Python、PowerShell 或 GStreamer，也无需手填认证目录。启动器为子进程设置包内库、插件和认证路径，不修改系统 PATH，不自动提权或安装驱动。ZIP/TAR 便携包仍可完整解压到可写目录，再启动根目录 `RustCarPlay.exe`（Windows）或 `./RustCarPlay`（Linux/macOS）。
 
 ```text
 RustCarPlay(.exe)          桌面入口；加 --cli 启动命令行
 app/                      carplay-desktop 与 rustcarplay
 runtime/gstreamer/        媒体库、插件和插件扫描器
 runtime/usb/              Windows USB 用户态库
+runtime/usb-filter/       Windows USB 控制过滤器用户态 DLL
+runtime/usb-driver/       Windows 过滤驱动 ZIP 与来源记录；不会自动安装
 resources/auth/           固定实验身份和 provenance.json
-.local/                   首次运行生成的设置、配对、缓存和日志
+INSTALLATION.json         仅安装版包含，启用用户数据目录
+.local/                   仅便携版在包根生成个人状态
 ```
 
-不要只复制根入口或 `app/`。`.local/` 是各用户的个人状态，发布包不含开发者的设置、手机配对或日志。Windows 的 USB DLL 位于 `runtime/usb/bin/`；Linux 的 libimobiledevice、BlueZ 用户态库随依赖闭包置于 `runtime/gstreamer/lib/`，系统服务与驱动仍由操作系统提供。原生组件版本、对应源码和许可索引见包内 `runtime/NATIVE-MANIFEST.json` 与 `runtime/licenses/`。
+不要只复制根入口或 `app/`。发布包不含开发者的设置、手机配对或日志。Windows 的 USB DLL 位于 `runtime/usb/bin/`；Linux 的 libimobiledevice、BlueZ 用户态库随依赖闭包置于 `runtime/gstreamer/lib/`，系统服务与驱动仍由操作系统提供。原生组件版本、对应源码和许可索引见包内 `runtime/NATIVE-MANIFEST.json` 与 `runtime/licenses/`。
 
-Windows 建议先用局域网：电脑和 iPhone 加入同一 Wi-Fi，在系统设置完成蓝牙配对。USB 需要 Apple Mobile Device Service、信任/权限和设备配置；管理员准备脚本仍需要 PowerShell 7、相关 SDK 工具及可能的手动重插。这些前置条件并未因打包 DLL 而消失，见 [USB 说明](USB.md) 与[驱动配置和恢复](WINDOWS_USB_DRIVER.md)。
+### 安装与个人数据
 
-Linux x64/ARM64 以 Ubuntu 24.04、glibc 2.39 为基线，不保证旧发行版可运行。系统桌面、图形/音频驱动、BlueZ、NetworkManager、usbmuxd 及设备权限不捆绑；Linux 真机仍待验证。macOS 15 Intel/Apple Silicon 包仅供 GUI/核心预览，未公证，原生连接适配未实现。
+Windows Setup 按当前用户安装到 `%LOCALAPPDATA%\Programs\RustCarPlay`，应用安装不要求管理员权限。macOS 应用放在 `/Applications/RustCarPlay.app`；Linux DEB 将程序安装到 `/opt/rustcarplay`。安装版通过根入口旁的 `INSTALLATION.json` 选择用户数据目录，应用原有相对 `.local/` 布局保持不变：
+
+| 平台 | 设置、配对、日志与缓存路径 |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\RustCarPlay\.local\` |
+| Linux | `$XDG_DATA_HOME/rustcarplay/.local/`；未设置绝对 `XDG_DATA_HOME` 时为 `~/.local/share/rustcarplay/.local/` |
+| macOS | `~/Library/Application Support/RustCarPlay/.local/` |
+
+安装目录中的运行时与认证材料以绝对路径读取，配置无需写入 `/Applications` 或 `/opt`。Windows 可在系统应用设置中卸载，Linux 使用 `sudo apt remove rustcarplay`，macOS 移除应用即可；卸载保留上述个人数据。便携版没有安装标记，仍在解压目录的 `.local/` 保存状态。
+
+Windows USB 准备工具的驱动备份与恢复记录仍位于**安装根目录的 `.local/windows-usb/`**，与上表的应用个人数据分开。卸载程序保留这些运行后生成的文件，但不会自动还原 USB 驱动。需要撤销设备配置时，先按[USB 恢复流程](WINDOWS_USB_DRIVER.md)处理，并保留该目录直至恢复完成。
+
+Windows 建议先用局域网：电脑和 iPhone 加入同一 Wi-Fi，在系统设置完成蓝牙配对。USB 需要 Apple Mobile Device Service、信任/权限和设备配置；管理员准备脚本仍需要 PowerShell 7、SDK 签名验证工具及可能的手动重插。过滤器准备优先读取随包 `runtime/usb-driver/libusb-win32-bin-1.4.0.2.zip`，缺失时才使用固定下载来源；无论来源如何，仍执行原有摘要与签名校验，且不会由应用或安装程序自动安装。对应过滤驱动源码并入 Windows native-source 附件；新增五个安装包后，完整发布为 16 个附件。Apple 服务与 UsbNcm 系统驱动不捆绑。详见 [USB 说明](USB.md) 与[驱动配置和恢复](WINDOWS_USB_DRIVER.md)。
+
+Linux x64/ARM64 以 Ubuntu 24.04、glibc 2.39 为基线，不保证旧发行版可运行。DEB 声明图形库、BlueZ、NetworkManager、usbmuxd 等系统依赖；`apt install` 会解析并安装缺少的依赖，可能需要网络。系统桌面、硬件驱动、音频服务和设备权限仍由操作系统提供；Linux 真机仍待验证。macOS 15 Intel/Apple Silicon 包仅供 GUI/核心预览，采用 ad-hoc 签名且未公证，原生连接适配未实现。
 
 包内认证材料的来源与限制见下文[认证文件](#认证文件)。命令行也应经根入口运行，例如 `RustCarPlay.exe --cli doctor` 或 `./RustCarPlay --cli doctor`，以获得相同运行时环境。以下 SDK、Python 和 Cargo 安装步骤用于源码开发。
 
@@ -136,9 +155,23 @@ GStreamer feature 的编译/测试需要上述 native 环境；不能用 `DOCS_R
 
 ## English quickstart
 
-For the v0.1.1 offline package, extract the entire archive into a writable directory and run its root `RustCarPlay.exe` (Windows) or `./RustCarPlay` (Linux/macOS). Ordinary launch requires no Rust, Python, PowerShell or GStreamer installation and no manual certificate setup. The launcher selects `app/carplay-desktop`, bundled media libraries/plugins, and `resources/auth`; `--cli` selects `app/rustcarplay` instead. It changes the child process environment only. Settings, pairing records, caches and logs are generated under `.local/` and are not shipped. New package CI/environment validation is still in progress.
+Use the v0.1.1 Windows Setup, macOS DMG or Ubuntu 24.04 DEB matching your CPU architecture. Windows installs for the current user without administrator privileges; on macOS, drag the app to Applications; on Ubuntu, run `sudo apt install ./rustcarplay_0.1.1_amd64.deb` (use `arm64` for ARM64). Launch from the system application menu. macOS remains a GUI/core preview with no CarPlay connection support. Installer CI/environment validation is still in progress.
 
-Windows USB still needs Apple's mobile-device service, phone trust, permissions and device configuration. Preparation scripts currently require PowerShell 7 and relevant SDK tools; bundled user-space DLLs do not provide system drivers or make USB fully plug-and-play. Linux packages target Ubuntu 24.04 / glibc 2.39 and include the selected media dependency closure, but not a desktop, graphics/audio drivers, BlueZ, NetworkManager or usbmuxd services and permissions. macOS 15 packages are non-notarized GUI/core previews without native connection adapters.
+Ordinary launch requires no Rust, Python, PowerShell or GStreamer installation and no manual certificate setup. The launcher selects `app/carplay-desktop`, bundled media libraries/plugins, and `resources/auth`; `--cli` selects `app/rustcarplay` instead. It changes the child process environment only. Portable ZIP/TAR archives remain available: extract the whole archive into a writable directory and run its root `RustCarPlay.exe` or `./RustCarPlay`.
+
+### Installation and personal data
+
+Windows installs to `%LOCALAPPDATA%\Programs\RustCarPlay`, Linux to `/opt/rustcarplay`, and macOS to `/Applications/RustCarPlay.app`. The installed launcher detects `INSTALLATION.json` beside it, reads bundled resources by absolute path, and runs the application from a writable user data directory. Existing relative `.local/` settings, pairings, logs and caches reside at:
+
+- Windows: `%LOCALAPPDATA%\RustCarPlay\.local\`.
+- Linux: `$XDG_DATA_HOME/rustcarplay/.local/`, or `~/.local/share/rustcarplay/.local/` when no absolute `XDG_DATA_HOME` is set.
+- macOS: `~/Library/Application Support/RustCarPlay/.local/`.
+
+Uninstall via Windows application settings, `sudo apt remove rustcarplay`, or remove the macOS app. Personal data is preserved. Portable archives have no installation marker and keep `.local/` next to the root launcher. Releases never include a developer's personal settings, pairings or logs.
+
+Windows USB preparation backups and recovery records still live in **`.local/windows-usb/` under the installation directory**, separate from the application data paths above. Uninstallation preserves these generated files but does not restore USB drivers. To undo device configuration, follow the [USB recovery procedure](WINDOWS_USB_DRIVER.md) first and retain that directory until recovery is complete.
+
+Windows USB still needs Apple's mobile-device service, phone trust, permissions and device configuration. The filter preparation script prefers `runtime/usb-driver/libusb-win32-bin-1.4.0.2.zip` before its fixed download source; it retains all hash/signature checks and never runs automatically from the app or installer. PowerShell 7 and SDK signature-verification tools remain prerequisites. The exact filter-driver source is included in the Windows native-source attachment; five added installers bring the complete set to 16 assets. Apple services and Windows UsbNcm are not bundled. Linux packages target Ubuntu 24.04 / glibc 2.39 and include the selected media dependency closure, but still require OS desktop, graphics/audio drivers, BlueZ, NetworkManager, usbmuxd and suitable permissions. Linux device operation remains unverified. macOS 15 packages are non-notarized GUI/core previews without native connection adapters. Android and HarmonyOS are not built in this release.
 
 The commands below are for **building from source** and run from the repository root. Source builds need Rust stable, native toolchains, GStreamer development headers and pkg-config metadata. See the Chinese platform sections above for the full connection and recovery procedure and [v0.1.1 notes](releases/v0.1.1.md) for the package/source asset list.
 

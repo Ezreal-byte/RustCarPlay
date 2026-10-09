@@ -44,7 +44,9 @@ Windows 有线接收继续使用系统 `usbccgp` 复合设备父驱动、Apple U
 ./scripts/windows-usb-filter.ps1 -Action Verify
 ```
 
-`Inspect` 只输出散列后的 `device_token`、PID、配置索引和过滤器/CDC 枚举状态，不打印设备序列号。`Verify` 下载固定版本 `libusb-win32 1.4.0.2`，校验固定 SHA-256、文件 Authenticode、Microsoft WHCP 目录签名及 `signtool verify /kp /c` 的实际驱动文件归属。不修改系统。Windows SDK 的 SignTool 必须已安装；不随应用分发此工具。
+`Inspect` 只输出散列后的 `device_token`、PID、配置索引和过滤器/CDC 枚举状态，不打印设备序列号。`Verify` 优先读取 v0.1.1 Windows 包内的 `runtime/usb-driver/libusb-win32-bin-1.4.0.2.zip`，没有随包资源时才使用固定版本下载来源。两条路径都校验固定 SHA-256、文件 Authenticode、Microsoft WHCP 目录签名及 `signtool verify /kp /c` 的实际驱动文件归属，不修改系统。随包 ZIP 仅为准备资源，根启动器和普通连接绝不自动安装它；PowerShell 7 与 Windows SDK SignTool 仍须由系统提供。
+
+该过滤驱动精确 release 的对应源码并入 `RustCarPlay-0.1.1-native-source-windows-x86_64.tar.gz`，随包保留上游许可与来源记录。Apple Mobile Device Service、Apple 驱动和系统 UsbNcm 不随包分发。提供 ZIP 不改变下文单设备选择、签名验证、管理员安装及恢复流程，也不代表全新系统首次安装已验收；本轮离线包 CI 仍在进行。
 
 固定下载来源：[libusb-win32 官方 release](https://github.com/mcuee/libusb-win32/releases/tag/release_1.4.0.2)。归档 SHA-256 为 `00004c92cdb99be36e17fb2377165eb97e63b48ba895bfc04a642ea9c3e26d94`。验证已经在开发机通过。本轮真机实际复用原有 1.2.6.0 驱动，没有安装该包的全局驱动；因此首次安装 1.4.0.2 的路径仍待验证。签名有效不等于其他系统一定允许加载；如系统策略拒绝，返回错误，不关闭 Secure Boot、内存完整性或签名验证。
 

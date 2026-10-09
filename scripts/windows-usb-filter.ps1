@@ -24,10 +24,17 @@ function Get-UsbFilterPackage {
     }
     $directory = [IO.Path]::GetFullPath($PackageDirectory)
     $zip = Join-Path (Split-Path -Parent $directory) 'libusb-win32-bin-1.4.0.2.zip'
+    $bundledZip = Join-Path (Split-Path -Parent $PSScriptRoot) 'runtime/usb-driver/libusb-win32-bin-1.4.0.2.zip'
     $hash = '00004C92CDB99BE36E17FB2377165EB97E63B48BA895BFC04A642EA9C3E26D94'
-    [IO.Directory]::CreateDirectory((Split-Path -Parent $zip)) | Out-Null
-    if (-not [IO.File]::Exists($zip)) {
-        Invoke-WebRequest -Uri 'https://github.com/mcuee/libusb-win32/releases/download/release_1.4.0.2/libusb-win32-bin-1.4.0.2.zip' -OutFile $zip
+    if ([IO.File]::Exists($bundledZip)) {
+        # The portable archive is still untrusted until the same pinned hash,
+        # signatures and catalog membership checks below have all succeeded.
+        $zip = $bundledZip
+    } else {
+        [IO.Directory]::CreateDirectory((Split-Path -Parent $zip)) | Out-Null
+        if (-not [IO.File]::Exists($zip)) {
+            Invoke-WebRequest -Uri 'https://github.com/mcuee/libusb-win32/releases/download/release_1.4.0.2/libusb-win32-bin-1.4.0.2.zip' -OutFile $zip
+        }
     }
     if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -cne $hash) {
         throw 'The pinned upstream archive SHA-256 does not match; nothing was installed.'
