@@ -161,7 +161,7 @@ def validate_layout(destination: Path, target: str) -> tuple[Path, str]:
         if os.name != "nt" and not os.access(path, os.X_OK):
             raise VerificationError("A packaged application is not executable.")
     if system == "Windows":
-        for helper in ["usb_probe", "usb_mode", "usb_runtime_check"]:
+        for helper in ["usb_probe", "usb_mode", "usb_runtime_check", "usb_driver_verify"]:
             require_file(root, f"tools/{helper}.exe")
     for forbidden in [".local", ".git", "target", "INSTALLATION.json"]:
         if (root / forbidden).exists():
@@ -378,7 +378,7 @@ def verify(archive: Path, target: str, gui_smoke: bool) -> None:
         working.mkdir()
         launcher = root / ("RustCarPlay.exe" if system == "Windows" else "RustCarPlay")
         if system == "Windows":
-            for executable in [launcher, *(root / f"tools/{name}.exe" for name in ["usb_probe", "usb_mode", "usb_runtime_check"])]:
+            for executable in [launcher, *(root / f"tools/{name}.exe" for name in ["usb_probe", "usb_mode", "usb_runtime_check", "usb_driver_verify"])]:
                 verify_windows_standalone_imports(executable)
             if launcher.read_bytes() == (root / "app/rustcarplay.exe").read_bytes():
                 raise VerificationError("The Windows launcher and CLI are identical; their build output names must not collide.")

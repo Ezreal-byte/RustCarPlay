@@ -215,6 +215,34 @@ impl FrameProof {
     }
 }
 
+/// A disable request alone must not sever the only working iAP control path.
+/// Both proofs belong to one accepted AirPlay connection; no state is carried
+/// over to another connection, even when its first decoded image is cached.
+#[derive(Default)]
+struct BootstrapHandoff {
+    accepted: bool,
+    requested: bool,
+    tunnel_ready: bool,
+}
+
+impl BootstrapHandoff {
+    fn observe(&mut self, event: &ReceiverEvent) -> bool {
+        match event {
+            ReceiverEvent::TcpAccepted => {
+                *self = Self {
+                    accepted: true,
+                    ..Default::default()
+                };
+            }
+            ReceiverEvent::Disconnected | ReceiverEvent::Error(_) => *self = Self::default(),
+            ReceiverEvent::BluetoothHandoffRequested if self.accepted => self.requested = true,
+            ReceiverEvent::IapTunnelReady if self.accepted => self.tunnel_ready = true,
+            _ => {}
+        }
+        self.accepted && self.requested && self.tunnel_ready
+    }
+}
+
 pub struct Connection {
     pub media: Arc<GStreamerMediaSink>,
     receiver: ReceiverHandle,
@@ -224,6 +252,8 @@ pub struct Connection {
     cancel: Arc<AtomicBool>,
     live: Arc<AtomicBool>,
     proof: FrameProof,
+    handoff: BootstrapHandoff,
+    release_bootstrap: Arc<AtomicBool>,
     hotspot: Option<carplay_platform::hotspot::HotspotSession>,
 }
 
@@ -324,6 +354,8 @@ impl Connection {
         let stopped = cancel.clone();
         let live = Arc::new(AtomicBool::new(false));
         let active = live.clone();
+        let release_bootstrap = Arc::new(AtomicBool::new(false));
+        let handed_off = release_bootstrap.clone();
         let (tx, updates) = mpsc::sync_channel(128);
         let wireless = thread::Builder::new()
             .name("carplay-bluetooth".into())
@@ -338,16 +370,23 @@ impl Connection {
                             auth.clone(),
                             Default::default(),
                         )?;
-                        let stream = RfcommStream::connect(ConnectOptions {
-                            peer: device.iphone,
-                            service: IAP2_IPHONE_SERVICE_UUID.parse()?,
-                            channel: device.rfcomm_channel,
-                            timeout: Duration::from_secs(15),
-                        })?;
-                        let result = carplay_wireless::run(
+                        let stream = RfcommStream::connect_with_cancel(
+                            ConnectOptions {
+                                peer: device.iphone,
+                                service: IAP2_IPHONE_SERVICE_UUID.parse()?,
+                                channel: device.rfcomm_channel,
+                                timeout: Duration::from_secs(15),
+                            },
+                            &stopped,
+                        )
+                        .context("Bluetooth RFCOMM connection")?;
+                        let result = carplay_wireless::run_with_cancel(
                             stream,
                             coordinator,
-                            &stopped,
+                            || {
+                                stopped.load(Ordering::Acquire)
+                                    || handed_off.load(Ordering::Acquire)
+                            },
                             || active.load(Ordering::Acquire),
                             |event| {
                                 let update = match &event {
@@ -375,6 +414,9 @@ impl Connection {
                         Ok(())
                     };
                     if let Err(e) = run() {
+                        if stopped.load(Ordering::Acquire) {
+                            break;
+                        }
                         let permanent =
                             e.downcast_ref::<carplay_wireless::Error>()
                                 .is_some_and(|e| {
@@ -385,13 +427,15 @@ impl Connection {
                                             | carplay_wireless::Error::Configuration(_)
                                     )
                                 });
-                        let _ = tx.try_send(AppEvent::Error(e.to_string()));
+                        let _ = tx.try_send(AppEvent::Error(format!("{e:#}")));
                         if permanent {
                             break;
                         }
                     }
                     // The phone may close bootstrap RFCOMM after handing off to its live LAN session.
-                    while active.load(Ordering::Acquire) && !stopped.load(Ordering::Acquire) {
+                    while (active.load(Ordering::Acquire) || handed_off.load(Ordering::Acquire))
+                        && !stopped.load(Ordering::Acquire)
+                    {
                         attempt = 0;
                         wait_for_stop(&stopped, Duration::from_millis(100));
                     }
@@ -416,6 +460,8 @@ impl Connection {
             cancel,
             live,
             proof: FrameProof::default(),
+            handoff: BootstrapHandoff::default(),
+            release_bootstrap,
             hotspot,
         })
     }
@@ -423,6 +469,8 @@ impl Connection {
         let mut events = Vec::new();
         while let Ok(event) = self.receiver.events.try_recv() {
             self.proof.observe(&event, self.media.latest_frame(110));
+            self.release_bootstrap
+                .store(self.handoff.observe(&event), Ordering::Release);
             if let ReceiverEvent::IapMessage { message_id, body } = &event {
                 match metadata::decode(&ControlMessage {
                     message_id: *message_id,
@@ -563,5 +611,39 @@ mod tests {
             format!("{:?}", AppEvent::Metadata(update)),
             "Metadata(\"now_playing\")"
         );
+    }
+
+    #[test]
+    fn bluetooth_handoff_requires_both_proofs_from_the_same_connection() {
+        for reverse in [false, true] {
+            let mut handoff = BootstrapHandoff::default();
+            let (first, second) = if reverse {
+                (
+                    ReceiverEvent::IapTunnelReady,
+                    ReceiverEvent::BluetoothHandoffRequested,
+                )
+            } else {
+                (
+                    ReceiverEvent::BluetoothHandoffRequested,
+                    ReceiverEvent::IapTunnelReady,
+                )
+            };
+            assert!(!handoff.observe(&first));
+            assert!(!handoff.observe(&second));
+            assert!(!handoff.observe(&ReceiverEvent::TcpAccepted));
+            assert!(!handoff.observe(&first));
+            assert!(!handoff.observe(&ReceiverEvent::Verified));
+            assert!(!handoff.observe(&ReceiverEvent::FirstVideoFrame(110)));
+            assert!(handoff.observe(&second));
+            assert!(!handoff.observe(&ReceiverEvent::Disconnected));
+            assert!(!handoff.observe(&ReceiverEvent::TcpAccepted));
+            assert!(!handoff.observe(&second));
+            // Accepting again also invalidates incomplete proofs without a
+            // preceding disconnected event (for example after a queue overflow).
+            assert!(!handoff.observe(&ReceiverEvent::TcpAccepted));
+            assert!(!handoff.observe(&first));
+            assert!(!handoff.observe(&ReceiverEvent::Error("control failed".into())));
+            assert!(!handoff.observe(&second));
+        }
     }
 }

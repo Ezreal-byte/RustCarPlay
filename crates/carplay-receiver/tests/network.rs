@@ -150,6 +150,21 @@ fn verified_with_options(
     capture: Option<Arc<dyn carplay_core::media::CaptureFactory>>,
     microphone: bool,
 ) -> Session {
+    verified_with_config(
+        iap,
+        capture,
+        ReceiverConfig {
+            microphone,
+            ..ReceiverConfig::default()
+        },
+    )
+}
+
+fn verified_with_config(
+    iap: bool,
+    capture: Option<Arc<dyn carplay_core::media::CaptureFactory>>,
+    config: ReceiverConfig,
+) -> Session {
     let directory = tempfile::tempdir().unwrap();
     let (accessory, store) = FilePairingStore::open(directory.path()).unwrap();
     let controller = AirPlayIdentity::generate().unwrap();
@@ -160,10 +175,7 @@ fn verified_with_options(
     let (sender, events) = mpsc::sync_channel(128);
     let options = ReceiverOptions {
         bind: "127.0.0.1:0".parse().unwrap(),
-        config: ReceiverConfig {
-            microphone,
-            ..ReceiverConfig::default()
-        },
+        config,
         bluetooth_address: "02:00:00:00:00:01".into(),
         state_dir: directory.path().into(),
         advertise: false,
@@ -299,6 +311,55 @@ fn response_plist(response: &rtsp::Request) -> Value {
 }
 
 #[test]
+fn encrypted_setup_enables_hevc_and_second_screen_as_advertised() {
+    let config = ReceiverConfig {
+        hevc: true,
+        second_screen: true,
+        ..ReceiverConfig::default()
+    };
+    let (_directory, mut server, mut peer, _shared, _media) =
+        verified_with_config(false, None, config);
+    let declaration = response_plist(&peer.request("GET", "/info", &[]));
+    assert!(
+        declaration
+            .as_dictionary()
+            .unwrap()
+            .contains_key("hevcInfo")
+    );
+    let setup = response_plist(&peer.plist("SETUP", dict([])));
+    assert_eq!(
+        setup.as_dictionary().unwrap()["enabledFeatures"],
+        array([text("hevc"), text("viewAreas"), text("altScreen")])
+    );
+    assert_eq!(peer.request("GET", "/info", &[]).path, "200");
+    server.stop();
+}
+
+#[test]
+fn bluetooth_handoff_commands_are_acknowledged_without_claiming_a_ready_tunnel() {
+    let (_directory, mut server, mut peer, _shared, _media) = verified();
+    for command in ["disableBluetooth", "DiSaBlE-bLuEtOoTh", "modesChanged"] {
+        let body = info::encode(&dict([("type", text(command))])).unwrap();
+        assert_eq!(peer.request("POST", "/command", &body).path, "200");
+    }
+    let observed: Vec<_> = server.events.try_iter().collect();
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|event| matches!(event, ReceiverEvent::BluetoothHandoffRequested))
+            .count(),
+        2
+    );
+    assert!(
+        !observed
+            .iter()
+            .any(|event| matches!(event, ReceiverEvent::IapTunnelReady))
+    );
+    assert!(observed.iter().any(|event| matches!(event, ReceiverEvent::Diagnostic(value) if value == "AirPlay modesChanged acknowledged")));
+    server.stop();
+}
+
+#[test]
 fn paired_controller_encrypted_info_setup_two_audio_types_and_partial_teardown() {
     let (_directory, mut server, mut peer, shared, media) = verified();
     let info = response_plist(&peer.request("GET", "/info", &[]));
@@ -384,6 +445,14 @@ fn paired_controller_encrypted_info_setup_two_audio_types_and_partial_teardown()
     }
     assert_eq!(peer.request("GET", "/info", &[]).path, "200");
     assert_eq!(peer.request("TEARDOWN", "/session", &[]).path, "200");
+    assert_eq!(
+        server
+            .events
+            .try_iter()
+            .filter(|event| matches!(event, ReceiverEvent::FirstAudioPacket(100)))
+            .count(),
+        2
+    );
     server.stop();
 }
 
@@ -422,6 +491,10 @@ fn setup_rejects_entire_invalid_batch_without_leaking_a_stream() {
 fn encrypted_event_channel_handles_multiword_status_and_real_ui_request() {
     let (_directory, mut server, mut peer, shared, _media) = verified();
     let setup = response_plist(&peer.plist("SETUP", dict([])));
+    assert_eq!(
+        setup.as_dictionary().unwrap()["enabledFeatures"],
+        array([text("viewAreas")])
+    );
     let port = setup.as_dictionary().unwrap()["eventPort"]
         .as_unsigned_integer()
         .unwrap() as u16;
@@ -477,7 +550,19 @@ fn encrypted_event_channel_handles_multiword_status_and_real_ui_request() {
         b"RTSP/1.0 455 Method Not Valid in This State\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n",
     );
     assert_eq!(event.request("POST", "/command", &request).path, "200");
+    let handoff = info::encode(&dict([("type", text("disableBluetooth"))])).unwrap();
+    assert_eq!(event.request("POST", "/command", &handoff).path, "200");
     let observed: Vec<_> = server.events.try_iter().collect();
+    assert!(
+        observed
+            .iter()
+            .any(|event| matches!(event, ReceiverEvent::BluetoothHandoffRequested))
+    );
+    assert!(
+        !observed
+            .iter()
+            .any(|event| matches!(event, ReceiverEvent::IapTunnelReady))
+    );
     assert!(
         observed
             .iter()
@@ -608,6 +693,10 @@ fn type130_encrypted_tunnel_authenticates_fragments_and_uses_actual_endpoint() {
     };
     let (_directory, mut server, mut peer, shared, _media) = verified_with_iap(true);
     let setup = response_plist(&peer.plist("SETUP", dict([])));
+    assert_eq!(
+        setup.as_dictionary().unwrap()["enabledFeatures"],
+        array([text("iAPChannel"), text("viewAreas")])
+    );
     let event_port = setup.as_dictionary().unwrap()["eventPort"]
         .as_unsigned_integer()
         .unwrap() as u16;
@@ -774,6 +863,13 @@ fn type130_encrypted_tunnel_authenticates_fragments_and_uses_actual_endpoint() {
     );
     assert_eq!(peer.request("GET", "/info", &[]).path, "200");
     let events: Vec<_> = server.events.try_iter().collect();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ReceiverEvent::IapTunnelReady))
+            .count(),
+        1
+    );
     assert!(
         !events
             .iter()

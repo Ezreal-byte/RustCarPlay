@@ -145,6 +145,20 @@ impl LaunchPlan {
                             .unwrap_or_else(|| root.join(relative).into_os_string()),
                     );
                 }
+                let usb_state = user_data_directory(platform, inherited)
+                    .unwrap_or_else(|_| working_directory.clone())
+                    .join(".local/windows-usb");
+                environment.insert(
+                    "RUSTCARPLAY_USB_STATE_DIR".into(),
+                    inherited
+                        .get(OsStr::new("RUSTCARPLAY_USB_STATE_DIR"))
+                        .cloned()
+                        .unwrap_or_else(|| usb_state.into_os_string()),
+                );
+                environment.insert(
+                    "RUSTCARPLAY_PACKAGE_DIR".into(),
+                    root.clone().into_os_string(),
+                );
             }
             Platform::Linux => {
                 prepend_paths(
@@ -412,6 +426,37 @@ mod tests {
     }
 
     #[test]
+    fn installed_and_portable_windows_share_usb_restore_state_across_updates() {
+        let user = std::env::temp_dir().join("same Windows user");
+        let inherited = BTreeMap::from([(
+            OsString::from("LocalAppData"),
+            user.clone().into_os_string(),
+        )]);
+        let installed =
+            LaunchPlan::build(&executable(), vec![], Platform::Windows, &inherited, true).unwrap();
+        let portable_executable = std::env::temp_dir().join("another package/RustCarPlay.exe");
+        let portable = LaunchPlan::build(
+            &portable_executable,
+            vec![],
+            Platform::Windows,
+            &inherited,
+            false,
+        )
+        .unwrap();
+        let key = OsStr::new("RUSTCARPLAY_USB_STATE_DIR");
+        assert_eq!(
+            installed.environment[key],
+            user.join("RustCarPlay/.local/windows-usb")
+        );
+        assert_eq!(installed.environment[key], portable.environment[key]);
+        assert_ne!(installed.root, portable.root);
+        assert_eq!(
+            installed.environment[OsStr::new("RUSTCARPLAY_PACKAGE_DIR")],
+            installed.root
+        );
+    }
+
+    #[test]
     fn installed_windows_preserves_explicit_auth_and_usb_overrides() {
         let user = std::env::temp_dir().join("carplay user overrides");
         let inherited = BTreeMap::from([
@@ -428,6 +473,10 @@ mod tests {
                 OsString::from("rustcarplay_usb_filter_dir"),
                 OsString::from("custom-filter"),
             ),
+            (
+                OsString::from("rustcarplay_usb_state_dir"),
+                OsString::from("custom-state"),
+            ),
         ]);
         let original = inherited.clone();
         let plan =
@@ -436,6 +485,7 @@ mod tests {
             ("RUSTCARPLAY_AUTH_DIR", "custom-auth"),
             ("RUSTCARPLAY_LIBIMOBILEDEVICE_DIR", "custom-usbmux"),
             ("RUSTCARPLAY_USB_FILTER_DIR", "custom-filter"),
+            ("RUSTCARPLAY_USB_STATE_DIR", "custom-state"),
         ] {
             assert_eq!(plan.environment[OsStr::new(key)], value);
         }

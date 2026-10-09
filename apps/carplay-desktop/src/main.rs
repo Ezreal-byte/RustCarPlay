@@ -7,6 +7,7 @@ mod style;
 mod touch;
 #[cfg(test)]
 mod ui_tests;
+mod video;
 use carplay_app::{
     AppEvent, Connection, ConnectionMode, ConnectionOptions, TransportOptions, WirelessDevice,
 };
@@ -76,7 +77,12 @@ fn main() -> eframe::Result<()> {
                 ),
                 egui::TextureOptions::LINEAR,
             );
-            Ok(Box::new(Desktop::new(smoke, screenshot, logo)))
+            Ok(Box::new(Desktop::new(
+                smoke,
+                screenshot,
+                logo,
+                cc.wgpu_render_state.clone(),
+            )))
         }),
     )
 }
@@ -86,6 +92,10 @@ enum JobResult {
     Auth(String),
     Hosts(HostChoices),
     HotspotCapability(String),
+    #[cfg(target_os = "windows")]
+    UsbPrepared(Result<carplay_platform::usb::windows_setup::PreparationOutcome, String>),
+    #[cfg(target_os = "windows")]
+    UsbProgress(String),
 }
 struct HostChoices {
     adapters: Vec<carplay_platform::bluetooth::LocalAdapter>,
@@ -150,6 +160,8 @@ struct Desktop {
     hotspot_password: zeroize::Zeroizing<String>,
     hotspot_status: Option<String>,
     usb_device: String,
+    #[cfg(target_os = "windows")]
+    usb_resume: Option<String>,
     startup_cancel: Option<Arc<AtomicBool>>,
     auth_dir: String,
     status: String,
@@ -159,11 +171,13 @@ struct Desktop {
     pending: Option<Receiver<Result<Connection, String>>>,
     connection: Option<Connection>,
     closing: Option<Receiver<Result<(), String>>>,
-    texture: Option<egui::TextureHandle>,
+    texture: Option<video::VideoTexture>,
+    render_state: Option<eframe::egui_wgpu::RenderState>,
     last_frame: Option<Arc<carplay_media::RgbaFrame>>,
     navigation: Navigation,
     logo: egui::TextureHandle,
     diagnostics_open: bool,
+    vehicle_open: bool,
     night: bool,
     fullscreen: bool,
     suppress_touch: bool,
@@ -178,7 +192,12 @@ struct Desktop {
 }
 
 impl Desktop {
-    fn new(smoke: bool, screenshot: Option<String>, logo: egui::TextureHandle) -> Self {
+    fn new(
+        smoke: bool,
+        screenshot: Option<String>,
+        logo: egui::TextureHandle,
+        render_state: Option<eframe::egui_wgpu::RenderState>,
+    ) -> Self {
         let profile = std::fs::read(".local/connection.json")
             .ok()
             .filter(|b| b.len() <= 16384)
@@ -222,6 +241,8 @@ impl Desktop {
             hotspot_password: zeroize::Zeroizing::new(String::new()),
             hotspot_status: None,
             usb_device: field("usb_device"),
+            #[cfg(target_os = "windows")]
+            usb_resume: None,
             startup_cancel: None,
             auth_dir: carplay_app::default_auth_dir()
                 .to_string_lossy()
@@ -234,10 +255,12 @@ impl Desktop {
             connection: None,
             closing: None,
             texture: None,
+            render_state,
             last_frame: None,
             navigation: Navigation::default(),
             logo,
             diagnostics_open: false,
+            vehicle_open: false,
             night: false,
             fullscreen: false,
             suppress_touch: false,
@@ -321,7 +344,37 @@ impl Desktop {
         })
     }
 
+    fn usb_connection_blocker(&self) -> Option<&'static str> {
+        #[cfg(target_os = "windows")]
+        if self.mode == ConnectionMode::Usb {
+            if self
+                .usb_resume
+                .as_ref()
+                .is_some_and(|id| id == &self.usb_device)
+            {
+                return Some(
+                    "请先拔掉数据线，等待至少 5 秒，再插回并解锁；然后点击“已重新插好，继续准备 USB”。准备成功后才能连接。",
+                );
+            }
+            let phone = self
+                .hosts
+                .as_ref()
+                .and_then(|h| h.usb.as_ref().ok())
+                .and_then(|phones| phones.iter().find(|phone| phone.id == self.usb_device));
+            return match phone.map(|phone| &phone.readiness) {
+                Some(carplay_platform::usb::Readiness::InterfacesAvailable) => None,
+                Some(_) => Some("请先点击“准备 Windows USB”并按提示完成配置，再连接 CarPlay。"),
+                None => Some("请连接并解锁 iPhone，然后刷新设备列表。"),
+            };
+        }
+        None
+    }
+
     fn start(&mut self) {
+        if let Some(reason) = self.usb_connection_blocker() {
+            self.status = reason.into();
+            return;
+        }
         let parsed = self.connection_options();
         let options = match parsed {
             Ok(o) => o,
@@ -368,6 +421,7 @@ impl Desktop {
         }
         self.texture = None;
         self.last_frame = None;
+        self.vehicle_open = false;
         self.navigation.disconnected();
         self.video_session_ready = false;
     }
@@ -397,6 +451,9 @@ impl Desktop {
             match result {
                 Ok(c) => {
                     self.hotspot_password.zeroize();
+                    let repaint = ctx.clone();
+                    c.media
+                        .set_frame_ready_callback(Arc::new(move || repaint.request_repaint()));
                     self.connection = Some(c);
                     if cancelled {
                         self.disconnect();
@@ -422,7 +479,11 @@ impl Desktop {
             };
         }
         if let Some(result) = self.job.as_ref().and_then(|r| r.try_recv().ok()) {
-            self.job = None;
+            match &result {
+                #[cfg(target_os = "windows")]
+                JobResult::UsbProgress(_) => {}
+                _ => self.job = None,
+            }
             match result {
                 JobResult::Diagnostics(report) => {
                     self.diagnostics = Some(report);
@@ -454,9 +515,43 @@ impl Desktop {
                             self.usb_device = phones[0].id.clone();
                         }
                     }
+                    #[cfg(target_os = "windows")]
+                    if self.usb_resume.is_none()
+                        && let Ok(phones) = &hosts.usb
+                        && let Some(phone) = phones.iter().find(|phone| phone.id == self.usb_device)
+                        && carplay_platform::usb::windows_setup::pending_replug(phone)
+                    {
+                        self.usb_resume = Some(phone.id.clone());
+                    }
                     self.hosts = Some(hosts);
                 }
                 JobResult::HotspotCapability(status) => self.hotspot_status = Some(status),
+                #[cfg(target_os = "windows")]
+                JobResult::UsbProgress(message) => self.status = message,
+                #[cfg(target_os = "windows")]
+                JobResult::UsbPrepared(result) => {
+                    use carplay_platform::usb::windows_setup::PreparationOutcome;
+                    self.status = match result {
+                        Ok(PreparationOutcome::Ready) => {
+                            self.usb_resume = None;
+                            "USB 准备完成，请点击连接 CarPlay".into()
+                        }
+                        Ok(PreparationOutcome::ReplugRequired {
+                            message,
+                            resume_after_replug,
+                        }) => {
+                            self.usb_resume = resume_after_replug.then(|| self.usb_device.clone());
+                            message
+                        }
+                        Ok(PreparationOutcome::Failed(message)) => {
+                            self.usb_resume = None;
+                            message
+                        }
+                        Err(message) => message,
+                    };
+                    self.log(self.status.clone());
+                    self.refresh_hosts();
+                }
             }
         }
         let events = self
@@ -482,12 +577,20 @@ impl Desktop {
                 self.status = "尚未匹配手机服务；可断开后填写 iPhone Wi-Fi IP 重试".into()
             }
             AppEvent::Error(error) => self.status = error.clone(),
+            AppEvent::Receiver(carplay_receiver::ReceiverEvent::UiRequested(_)) => {
+                // OEM entry point for downstream vehicle integrations. Never
+                // treat the phone-supplied URL as a command or launch a browser.
+                self.release_touch();
+                self.navigation.show_home();
+                self.vehicle_open = true;
+            }
             AppEvent::Receiver(carplay_receiver::ReceiverEvent::Verified) => {
                 self.status = "AirPlay 配对验证通过".into();
                 self.video_session_ready = true;
             }
             AppEvent::Receiver(carplay_receiver::ReceiverEvent::TcpAccepted) => {
                 self.clear_video();
+                self.vehicle_open = false;
                 self.navigation.begin_connection();
                 self.video_session_ready = false;
                 self.night = false;
@@ -497,6 +600,7 @@ impl Desktop {
                 self.clear_video();
                 self.navigation.disconnected();
                 self.video_session_ready = false;
+                self.vehicle_open = false;
             }
             _ => {}
         }
@@ -511,15 +615,11 @@ impl Desktop {
         {
             return;
         }
-        let image = egui::ColorImage::from_rgba_unmultiplied(
-            [frame.width as usize, frame.height as usize],
-            &frame.rgba,
-        );
-        if let Some(texture) = self.texture.as_mut() {
-            texture.set(image, egui::TextureOptions::LINEAR);
-        } else {
-            self.texture =
-                Some(ctx.load_texture("carplay-frame", image, egui::TextureOptions::LINEAR));
+        if let Err(error) =
+            video::VideoTexture::upload(&mut self.texture, self.render_state.as_ref(), ctx, &frame)
+        {
+            self.status = error.into();
+            return;
         }
         self.last_frame = Some(frame);
         self.status = "正在接收画面".into();
@@ -671,7 +771,7 @@ impl Desktop {
         ui.heading("连接方式");
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         ui.label("当前平台为界面与核心预览，蓝牙、USB 和热点连接尚未实现。");
-        let busy = self.busy();
+        let busy = self.busy() || self.job.is_some();
         ui.add_enabled_ui(!busy, |ui| {
             let old_mode = self.mode;
             ui.horizontal(|ui| {
@@ -752,7 +852,22 @@ impl Desktop {
                         ui.label("未发现设备时，请检查数据线并刷新。");
                     }
                     #[cfg(target_os = "windows")]
-                    ui.small(egui::RichText::new("Windows 有线链路需要兼容的 USBMUX + NCM 驱动配置，当前不会自动替换系统驱动。").color(style::MUTED));
+                    {
+                        let resume = self.usb_resume.as_ref().is_some_and(|id| id == &self.usb_device);
+                        if ui.add_enabled(self.job.is_none() && !self.usb_device.is_empty(), egui::Button::new(if resume { "已重新插好，继续准备 USB" } else { "准备 Windows USB" })).clicked() {
+                            let device_id = self.usb_device.clone();
+                            let (tx, rx) = mpsc::channel();
+                            self.job = Some(rx);
+                            self.status = "正在检查 USB 准备环境…".into();
+                            std::thread::spawn(move || {
+                                let result = carplay_platform::usb::windows_setup::prepare_usb(&device_id, resume, |message| {
+                                    let _ = tx.send(JobResult::UsbProgress(message));
+                                });
+                                let _ = tx.send(JobResult::UsbPrepared(result));
+                            });
+                        }
+                        ui.small(egui::RichText::new("首次使用或提示配置不兼容时，点击准备 USB 并允许管理员配置；保持手机解锁。需拔插时会给出提示。").color(style::MUTED));
+                    }
                 }
             }
             ui.add_space(8.);
@@ -803,6 +918,11 @@ impl Desktop {
             });
         });
         ui.add_space(14.);
+        let usb_blocker = self.usb_connection_blocker();
+        if let Some(reason) = usb_blocker {
+            ui.label(egui::RichText::new(reason).color(style::MUTED));
+            ui.add_space(8.);
+        }
         if self.texture.is_some() {
             if ui
                 .add_sized(
@@ -815,7 +935,9 @@ impl Desktop {
             }
         } else if ui
             .add_enabled(
-                !busy && cfg!(any(target_os = "windows", target_os = "linux")),
+                !busy
+                    && usb_blocker.is_none()
+                    && cfg!(any(target_os = "windows", target_os = "linux")),
                 style::primary(if busy {
                     "正在连接…"
                 } else {
@@ -890,7 +1012,7 @@ impl Desktop {
             let rect = egui::Rect::from_center_size(bounds.center(), size);
             let response = ui.put(
                 rect,
-                egui::Image::new(texture)
+                egui::Image::new((texture.id(), texture.size_vec2()))
                     .fit_to_exact_size(size)
                     .sense(egui::Sense::click_and_drag()),
             );
@@ -899,7 +1021,10 @@ impl Desktop {
                     response.rect,
                     &i.events,
                     i.pointer.primary_down(),
-                    i.focused && !self.diagnostics_open && !self.suppress_touch,
+                    i.focused
+                        && !self.diagnostics_open
+                        && !self.vehicle_open
+                        && !self.suppress_touch,
                 )
             });
             for contact in contacts {
@@ -935,6 +1060,26 @@ impl Desktop {
                     .size(13.)
                     .color(style::MUTED),
             );
+            ui.horizontal_wrapped(|ui| {
+                for (width, height) in [
+                    (800, 480),
+                    (1024, 600),
+                    (1280, 720),
+                    (1920, 720),
+                    (1920, 1080),
+                ] {
+                    if ui
+                        .selectable_label(
+                            self.config.width == width && self.config.height == height,
+                            format!("{width}×{height}"),
+                        )
+                        .clicked()
+                    {
+                        self.config.width = width;
+                        self.config.height = height;
+                    }
+                }
+            });
             ui.horizontal(|ui| {
                 ui.add(
                     egui::DragValue::new(&mut self.config.width)
@@ -955,8 +1100,8 @@ impl Desktop {
                 .selected_text(format!(
                     "{} fps{}",
                     self.config.fps,
-                    if self.config.fps == 30 {
-                        " · 推荐"
+                    if self.config.fps == 60 {
+                        " · 默认"
                     } else {
                         ""
                     }
@@ -976,6 +1121,12 @@ impl Desktop {
                 self.config.microphone = false;
             }
             egui::CollapsingHeader::new("更多显示选项").show(ui, |ui| {
+                style::field(
+                    ui,
+                    "车辆入口名称",
+                    &mut self.config.oem_label,
+                    "RustCarPlay",
+                );
                 ui.checkbox(&mut self.config.hevc, "HEVC 视频（实验性）");
                 ui.checkbox(&mut self.config.right_hand_drive, "右舵布局");
                 style::muted(ui, "默认使用 H.264，画面始终保持原比例。");
@@ -1157,12 +1308,35 @@ impl eframe::App for Desktop {
             self.diagnostics_open = open;
         }
         chrome::resize_edges(ctx);
+        if self.vehicle_open {
+            let mut open = true;
+            egui::Window::new("车辆扩展")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(360.)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.heading(&self.config.oem_label);
+                    ui.add_space(8.);
+                    ui.label("车辆扩展预留入口");
+                    style::muted(ui, "尚未接入车辆数据，可在此扩展车辆状态与控制功能。");
+                    ui.add_space(12.);
+                    if ui
+                        .add_enabled(self.texture.is_some(), egui::Button::new("返回 CarPlay"))
+                        .clicked()
+                    {
+                        self.vehicle_open = false;
+                        self.suppress_touch = true;
+                        self.navigation.show_player();
+                    }
+                });
+            self.vehicle_open &= open;
+        }
         self.capture_screenshot(ctx);
-        ctx.request_repaint_after(Duration::from_millis(if player || self.busy() {
-            33
-        } else {
-            150
-        }));
+        // Decoded frames wake egui immediately. This slower fallback services
+        // control/status updates when the phone is sending no video.
+        ctx.request_repaint_after(Duration::from_millis(150));
         if self.smoke && self.created.elapsed() > Duration::from_secs(3) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }

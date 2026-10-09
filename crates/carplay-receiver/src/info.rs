@@ -38,6 +38,25 @@ pub fn features(c: &ReceiverConfig) -> u64 {
         0x615653aee2 & !0x10004540a00
     }
 }
+
+/// Session capabilities must agree with the display declarations in /info.
+/// DiPlay enables HEVC in both places. A declaration without the matching
+/// SETUP feature leaves codec negotiation inconsistent before streaming starts.
+pub(crate) fn enabled_features(c: &ReceiverConfig, iap_channel: bool) -> Value {
+    let mut enabled = Vec::new();
+    if c.hevc {
+        enabled.push(text("hevc"));
+    }
+    if iap_channel {
+        enabled.push(text("iAPChannel"));
+    }
+    enabled.push(text("viewAreas"));
+    if c.second_screen {
+        enabled.push(text("altScreen"));
+    }
+    array(enabled)
+}
+
 pub fn build(c: &ReceiverConfig, device_id: &str, bt_address: &str) -> Value {
     let resource = |id| {
         dict([
@@ -183,6 +202,7 @@ pub fn build(c: &ReceiverConfig, device_id: &str, bt_address: &str) -> Value {
     if c.hevc {
         d.insert("hevcInfo".into(), Value::Dictionary(Dictionary::new()));
     }
+    crate::oem::apply(&mut d, c);
     Value::Dictionary(d)
 }
 
@@ -260,6 +280,46 @@ fn display(w: u16, h: u16, fps: u16, kind: u64, id: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup_negotiates_the_same_video_capabilities_as_info() {
+        for (hevc, second_screen, expected) in [
+            (false, false, vec!["viewAreas"]),
+            (true, false, vec!["hevc", "viewAreas"]),
+            (false, true, vec!["viewAreas", "altScreen"]),
+            (true, true, vec!["hevc", "viewAreas", "altScreen"]),
+        ] {
+            let config = ReceiverConfig {
+                hevc,
+                second_screen,
+                ..Default::default()
+            };
+            let declaration = build(&config, "02:00:00:00:00:01", "02:00:00:00:00:02");
+            let declaration = declaration.as_dictionary().unwrap();
+            assert_eq!(declaration.contains_key("hevcInfo"), hevc);
+            assert_eq!(
+                declaration["displays"].as_array().unwrap().len(),
+                if second_screen { 2 } else { 1 }
+            );
+            assert_eq!(
+                enabled_features(&config, false),
+                array(expected.into_iter().map(text))
+            );
+        }
+    }
+
+    #[test]
+    fn setup_only_enables_iap_channel_with_a_configured_tunnel() {
+        assert_eq!(
+            enabled_features(&ReceiverConfig::default(), true),
+            array([text("iAPChannel"), text("viewAreas")])
+        );
+        assert_eq!(
+            enabled_features(&ReceiverConfig::default(), false),
+            array([text("viewAreas")])
+        );
+    }
+
     #[test]
     fn declaration_has_consistent_real_capabilities() {
         let c = ReceiverConfig {

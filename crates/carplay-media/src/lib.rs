@@ -45,6 +45,14 @@ pub struct GStreamerMediaSink {
 }
 
 impl GStreamerMediaSink {
+    /// Called after publishing a decoded frame. Must be quick and non-blocking;
+    /// use it to schedule a UI repaint, not to draw or access native devices.
+    pub fn set_frame_ready_callback(&self, callback: Arc<dyn Fn() + Send + Sync>) {
+        #[cfg(feature = "gstreamer")]
+        self.backend.set_frame_ready_callback(callback);
+        #[cfg(not(feature = "gstreamer"))]
+        let _ = callback;
+    }
     pub fn new() -> Result<Self, Error> {
         #[cfg(feature = "gstreamer")]
         {

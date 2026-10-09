@@ -96,8 +96,11 @@ pub fn video_parameters(codec: VideoCodec, input: &[u8]) -> Result<VideoParamete
                     read_nal(input, &mut p, &mut out)?;
                 }
             }
-            if out.is_empty() || p != input.len() {
-                return Err(FramingError("empty or trailing hvcC data"));
+            if out.is_empty() {
+                return Err(FramingError("hvcC has no parameter sets"));
+            }
+            if p != input.len() {
+                return Err(FramingError("trailing hvcC data"));
             }
             length_size
         }
@@ -202,6 +205,11 @@ pub fn packed_rgba(
     if data.len() < needed {
         return Err(FramingError("truncated RGBA plane"));
     }
+    if stride == row {
+        // Normal decoder output is tightly packed. One bulk copy avoids a
+        // separate capacity check and memcpy for every row of every frame.
+        return Ok(data[..total].to_vec());
+    }
     let mut packed = Vec::with_capacity(total);
     for y in 0..height as usize {
         packed.extend_from_slice(&data[y * stride..y * stride + row]);
@@ -288,6 +296,11 @@ mod tests {
     }
     #[test]
     fn rgba_removes_padding_and_checks_bounds_before_copying() {
+        assert_eq!(
+            packed_rgba(1, 2, 4, &[1, 2, 3, 4, 5, 6, 7, 8, 99]).unwrap(),
+            [1, 2, 3, 4, 5, 6, 7, 8]
+        );
+        assert!(packed_rgba(1, 2, 4, &[0; 7]).is_err());
         assert_eq!(
             packed_rgba(1, 2, 8, &[1, 2, 3, 4, 99, 99, 99, 99, 5, 6, 7, 8]).unwrap(),
             [1, 2, 3, 4, 5, 6, 7, 8]

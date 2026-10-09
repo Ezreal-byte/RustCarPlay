@@ -899,8 +899,27 @@ pub struct Outcome {
 /// Never runs on a UI thread. Callbacks receive only redacted Debug events.
 pub fn run<S: Transport>(
     stream: S,
-    mut coordinator: Coordinator,
+    coordinator: Coordinator,
     cancelled: &AtomicBool,
+    live_session: impl FnMut() -> bool,
+    on_event: impl FnMut(Event) -> Action,
+) -> Result<Outcome> {
+    run_with_cancel(
+        stream,
+        coordinator,
+        || cancelled.load(Ordering::Acquire),
+        live_session,
+        on_event,
+    )
+}
+
+/// Like `run`, with independently owned cancellation signals (for example an
+/// application stop and a verified handoff to the current AirPlay iAP tunnel).
+/// The predicate is checked on every bounded I/O iteration, even when idle.
+pub fn run_with_cancel<S: Transport>(
+    stream: S,
+    mut coordinator: Coordinator,
+    mut cancelled: impl FnMut() -> bool,
     mut live_session: impl FnMut() -> bool,
     mut on_event: impl FnMut(Event) -> Action,
 ) -> Result<Outcome> {
@@ -911,7 +930,7 @@ pub fn run<S: Transport>(
     coordinator.start(0)?;
     let mut buffer = [0u8; 8192];
     loop {
-        if cancelled.load(Ordering::Acquire) {
+        if cancelled() {
             coordinator.stop();
         }
         coordinator.set_live_session(live_session());

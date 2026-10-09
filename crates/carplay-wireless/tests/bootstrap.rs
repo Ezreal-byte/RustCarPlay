@@ -792,3 +792,40 @@ fn blocking_runner_closes_on_cancel_eof_and_timeout() {
         }
     }
 }
+
+#[test]
+fn handoff_cancels_idle_real_transport_without_waiting_for_incoming_events() {
+    use std::net::{TcpListener, TcpStream};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    for _ in 0..3 {
+        let stream = TcpStream::connect(address).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let application_stop = Arc::new(AtomicBool::new(false));
+        let handoff = Arc::new(AtomicBool::new(false));
+        let handed_off = handoff.clone();
+        let stopped = application_stop.clone();
+        let worker = std::thread::spawn(move || {
+            run_with_cancel(
+                stream,
+                coordinator(Options::default()),
+                || stopped.load(Ordering::Acquire) || handed_off.load(Ordering::Acquire),
+                || false,
+                |_| Action::Continue,
+            )
+        });
+        let mut marker = vec![0; MARKER.len()];
+        peer.read_exact(&mut marker).unwrap();
+        assert_eq!(marker, MARKER);
+        let started = std::time::Instant::now();
+        handoff.store(true, Ordering::Release);
+        assert_eq!(
+            worker.join().unwrap().unwrap().terminal,
+            Terminal::Cancelled
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+        assert!(!application_stop.load(Ordering::Acquire));
+    }
+}

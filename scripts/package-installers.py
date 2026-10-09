@@ -307,6 +307,8 @@ def validate_installed(root: Path, target: str, temporary: Path, launcher: Path 
         raise RuntimeError("Installed application wrote state into its installation directory")
     if system == "Windows":
         data = Path(environment["LOCALAPPDATA"]) / "RustCarPlay"
+        portable.run_captured([str(launcher), "--smoke-test"], working, environment,
+                              "Installed Windows GUI startup")
     elif system == "Darwin":
         data = Path(environment["HOME"]) / "Library/Application Support/RustCarPlay"
         portable.verify_macos_dependencies(root, environment)
@@ -363,15 +365,18 @@ def verify(archive: Path, target: str) -> None:
             data = None
             sentinel = None
             driver_receipt = root / ".local/windows-usb/test-restore-record.json"
+            shared_driver_receipt = None
             try:
                 run([archive, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOICONS", "/TASKS=",
                      "/DIR=" + str(root), "/SmokeTestId=" + smoke_id, "/LOG=" + str(temporary / "setup.log")], timeout=600)
                 data = validate_installed(root, target, temporary)
                 sentinel = data / "keep-personal-data.txt"
                 sentinel.write_text("installer verification fixture", encoding="ascii")
-                # The explicit USB preparation scripts keep rollback receipts
-                # here. Unknown files must survive Inno's tracked-file removal.
+                # Preserve both old installation-local and current shared-user
+                # rollback receipts when removing tracked application files.
                 write_text(driver_receipt, '{"fixture": "no device or driver operation"}\n')
+                shared_driver_receipt = data / ".local/windows-usb/test-restore-record.json"
+                write_text(shared_driver_receipt, '{"fixture": "shared rollback record"}\n')
             finally:
                 if uninstaller.is_file():
                     run([uninstaller, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=180)
@@ -379,6 +384,8 @@ def verify(archive: Path, target: str) -> None:
                 raise RuntimeError("Uninstallation removed personal data")
             if not driver_receipt.is_file():
                 raise RuntimeError("Uninstallation removed USB driver rollback records")
+            if shared_driver_receipt is None or not shared_driver_receipt.is_file():
+                raise RuntimeError("Uninstallation removed shared USB driver rollback records")
             if (root / "RustCarPlay.exe").exists():
                 raise RuntimeError("Temporary Windows application was not uninstalled")
         elif system == "Darwin":

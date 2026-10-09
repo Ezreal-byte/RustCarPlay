@@ -9,6 +9,8 @@ pub mod system;
 pub mod system;
 #[cfg(target_os = "windows")]
 mod windows_filter;
+#[cfg(target_os = "windows")]
+pub mod windows_setup;
 use crate::diagnostics::DiagnosticIssue;
 use serde::Serialize;
 
@@ -298,7 +300,7 @@ pub fn match_carplay_configuration(
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize)]
 pub enum WinUsbConfigurationError {
     #[error(
-        "WinUSB cannot select non-first USB configuration (index {index}, value {value}); an explicit alternate transport/driver strategy is required"
+        "CarPlay USB configuration is not active (index {index}, value {value}); use Prepare Windows USB before connecting"
     )]
     NonFirstConfiguration { index: u8, value: u8 },
     #[error("selected USB configuration is not active; diagnostics will not change it")]

@@ -10,8 +10,12 @@ use std::{
     fmt,
     io::{self, Read, Write},
     str::FromStr,
+    sync::atomic::AtomicBool,
     time::Duration,
 };
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod connecting;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -181,16 +185,26 @@ impl RfcommStream {
     /// Establishes an RFCOMM socket. Linux UUID discovery uses libbluetooth's
     /// synchronous SDP API; `timeout` bounds socket connection, not SDP lookup.
     pub fn connect(options: ConnectOptions) -> Result<Self, PlatformError> {
+        Self::connect_with_cancel(options, &AtomicBool::new(false))
+    }
+
+    /// Cancellation closes the pending socket before returning. Linux's BlueZ
+    /// SDP lookup remains synchronous; cancellation is checked again afterwards.
+    pub fn connect_with_cancel(
+        options: ConnectOptions,
+        cancelled: &AtomicBool,
+    ) -> Result<Self, PlatformError> {
         validate_channel(options.channel)?;
         if options.timeout.is_zero() {
             return Err(PlatformError::InvalidTimeout);
         }
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
-            native::connect(options).map(|socket| Self { socket })
+            native::connect(options, cancelled).map(|socket| Self { socket })
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
+            let _ = cancelled;
             Err(PlatformError::Unsupported("native RFCOMM backend"))
         }
     }
@@ -203,6 +217,14 @@ impl RfcommStream {
     }
     pub fn shutdown(&self) -> io::Result<()> {
         self.socket.shutdown(std::net::Shutdown::Both)
+    }
+}
+
+impl Drop for RfcommStream {
+    fn drop(&mut self) {
+        // Bluetooth has no TCP-style half-close: explicitly disconnect before
+        // releasing the handle, including callers that never entered iAP2 run().
+        let _ = self.shutdown();
     }
 }
 

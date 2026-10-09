@@ -1,7 +1,11 @@
 use super::{BluetoothAddress, BluetoothDiagnostic, ConnectOptions, ServiceUuid};
 use crate::{PlatformError, diagnostics::DiagnosticIssue};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use std::{ffi::c_void, io, mem, ptr};
+use std::{
+    ffi::c_void,
+    io, mem, ptr,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 // Linux UAPI bluetooth/rfcomm.h: sa_family_t, little-endian bdaddr_t, channel.
 #[repr(C)]
@@ -39,14 +43,26 @@ fn address(peer: BluetoothAddress, channel: u8) -> SockAddr {
         SockAddr::new(storage, mem::size_of::<SockAddrRc>() as _)
     }
 }
-pub(super) fn connect(options: ConnectOptions) -> Result<Socket, PlatformError> {
+pub(super) fn connect(
+    options: ConnectOptions,
+    cancelled: &AtomicBool,
+) -> Result<Socket, PlatformError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(
+            io::Error::new(io::ErrorKind::Interrupted, "RFCOMM connection cancelled").into(),
+        );
+    }
     let channel = match options.channel {
         Some(channel) => channel,
         None => resolve_channel(options.peer, options.service)?,
     };
     let socket = socket()?;
-    socket.connect_timeout(&address(options.peer, channel), options.timeout)?;
-    Ok(socket)
+    Ok(super::connecting::connect(
+        socket,
+        &address(options.peer, channel),
+        options.timeout,
+        cancelled,
+    )?)
 }
 pub(super) fn listen(local: BluetoothAddress, channel: u8) -> Result<Socket, PlatformError> {
     let socket = socket()?;

@@ -171,10 +171,39 @@ pub fn annex_b(payload: &[u8]) -> Result<Vec<u8>, Error> {
 }
 
 pub fn codec_config(payload: &[u8]) -> Result<(VideoCodec, Vec<u8>), Error> {
+    // Bare records have no box header. Detect them before searching the screen
+    // format description: NAL data itself can contain a FourCC byte sequence.
+    if payload.first() == Some(&1) {
+        if payload.len() >= 9 && payload[5] & 0x1f > 0 && payload[8] & 0x1f == 7 {
+            return Ok((VideoCodec::H264, payload.to_vec()));
+        }
+        if payload.len() >= 23 {
+            return Ok((VideoCodec::H265, payload.to_vec()));
+        }
+        return Err(Error::Framing);
+    }
     for (i, code) in payload.windows(4).enumerate().skip(4) {
         if code == b"avcC" || code == b"hvcC" {
-            let data = &payload[i + 4..];
-            if data.is_empty() {
+            // Screen descriptions may wrap the box in a sample entry. Its
+            // declared size includes the header, not adjacent metadata boxes.
+            let start = i - 4;
+            let size = u32::from_be_bytes(payload[start..i].try_into().unwrap());
+            let (size, header) = match size {
+                0 => (payload.len() - start, 8),
+                1 => {
+                    let bytes = payload.get(i + 4..i + 12).ok_or(Error::Framing)?;
+                    let size = usize::try_from(u64::from_be_bytes(bytes.try_into().unwrap()))
+                        .map_err(|_| Error::Framing)?;
+                    (size, 16)
+                }
+                size => (size as usize, 8),
+            };
+            if size <= header {
+                return Err(Error::Framing);
+            }
+            let end = start.checked_add(size).ok_or(Error::Framing)?;
+            let data = payload.get(start + header..end).ok_or(Error::Framing)?;
+            if data.first() != Some(&1) {
                 return Err(Error::Framing);
             }
             return Ok((
@@ -187,13 +216,7 @@ pub fn codec_config(payload: &[u8]) -> Result<(VideoCodec, Vec<u8>), Error> {
             ));
         }
     }
-    if payload.len() >= 9 && payload[0] == 1 && payload[5] & 0x1f > 0 && payload[8] & 0x1f == 7 {
-        Ok((VideoCodec::H264, payload.to_vec()))
-    } else if payload.len() >= 23 && payload[0] == 1 {
-        Ok((VideoCodec::H265, payload.to_vec()))
-    } else {
-        Err(Error::Framing)
-    }
+    Err(Error::Framing)
 }
 
 pub fn rtp_payload(packet: &[u8]) -> Result<(u16, u32, &[u8]), Error> {
@@ -244,6 +267,44 @@ impl ReplayWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn codec_boxes_exclude_adjacent_metadata_and_validate_declared_bounds() {
+        for (code, codec) in [(b"hvcC", VideoCodec::H265), (b"avcC", VideoCodec::H264)] {
+            let data = [1, 2, 3, 4];
+            let mut box_data = 12u32.to_be_bytes().to_vec();
+            box_data.extend_from_slice(code);
+            box_data.extend_from_slice(&data);
+            let mut wrapped = vec![0; 86]; // visual sample-entry prefix
+            wrapped.extend_from_slice(&box_data);
+            wrapped.extend_from_slice(&8u32.to_be_bytes());
+            wrapped.extend_from_slice(b"free");
+            assert_eq!(codec_config(&wrapped).unwrap(), (codec, data.to_vec()));
+            for size in [0, 4, 8, 13, u32::MAX] {
+                let mut invalid = box_data.clone();
+                invalid[..4].copy_from_slice(&size.to_be_bytes());
+                if size == 0 {
+                    assert_eq!(codec_config(&invalid).unwrap().1, data);
+                } else {
+                    assert!(codec_config(&invalid).is_err());
+                }
+            }
+            let mut extended = 1u32.to_be_bytes().to_vec();
+            extended.extend_from_slice(code);
+            extended.extend_from_slice(&20u64.to_be_bytes());
+            extended.extend_from_slice(&data);
+            extended.extend_from_slice(b"metadata");
+            assert_eq!(codec_config(&extended).unwrap().1, data);
+            assert!(codec_config(&extended[..15]).is_err());
+        }
+    }
+
+    #[test]
+    fn raw_hevc_record_does_not_scan_parameter_sets_for_box_names() {
+        let mut record = vec![0; 23];
+        record[0] = 1;
+        record.extend_from_slice(b"hvcC");
+        assert_eq!(codec_config(&record).unwrap(), (VideoCodec::H265, record));
+    }
     #[test]
     fn malformed_nal_lengths_never_escape_bounds() {
         assert_eq!(

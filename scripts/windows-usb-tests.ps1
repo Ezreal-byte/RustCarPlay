@@ -37,7 +37,7 @@ function Set-UsbRegistryState([string]$Path,[string]$Name,$State) {
     $script:registry["$Path/$Name"] = $State
 }
 function Save-UsbBackup([string]$Path,$Backup,[bool]$Create) {
-    $script:durable = $Backup | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable
+    $script:durable = $Backup | ConvertTo-Json -Depth 10 | ConvertFrom-RustCarPlayJson
 }
 $entries = @(foreach ($entry in Get-UsbEntries) {
     $before = Get-UsbRegistryState $paths[$entry.Scope] $entry.Name
@@ -77,7 +77,7 @@ Assert-Throws { Assert-UsbBackup $backup $token } 'Backup-controlled registry na
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('rustcarplay-usb-' + [Guid]::NewGuid().ToString('N') + '.json')
 try {
     $report = @(@{product_id=4776;windows_device_token=$token;configuration=@{configuration_index=5;configuration_value=6}})
-    ConvertTo-Json -InputObject $report -Depth 5 | Set-Content -LiteralPath $fixture -Encoding utf8NoBOM
+    Write-RustCarPlayUtf8 $fixture (ConvertTo-Json -InputObject $report -Depth 5)
     $target = Get-UsbDescriptorTarget $fixture 4776 $token
     Assert ($target.Index -eq 5 -and $target.Value -eq 6) 'Descriptor index and value must remain distinct.'
     Assert-Throws { Get-UsbDescriptorTarget $fixture 4776 'winusb-FFFFFFFFFFFFFFFF' } 'Same-model phone with another instance token must be rejected.'

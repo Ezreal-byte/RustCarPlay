@@ -1,7 +1,7 @@
 use super::{BluetoothAddress, BluetoothDiagnostic, ConnectOptions};
 use crate::{PlatformError, diagnostics::DiagnosticIssue};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use std::{io, mem, ptr};
+use std::{io, mem, ptr, sync::atomic::AtomicBool};
 use windows_sys::Win32::{Devices::Bluetooth::*, Foundation::CloseHandle};
 
 fn decoded_name(name: &[u16]) -> String {
@@ -162,15 +162,22 @@ fn address(peer: BluetoothAddress, channel: u32, uuid: Option<super::ServiceUuid
     }
 }
 
-pub(super) fn connect(options: ConnectOptions) -> Result<Socket, PlatformError> {
+pub(super) fn connect(
+    options: ConnectOptions,
+    cancelled: &AtomicBool,
+) -> Result<Socket, PlatformError> {
     let socket = socket()?;
     let remote = address(
         options.peer,
         u32::from(options.channel.unwrap_or(0)),
         options.channel.is_none().then_some(options.service),
     );
-    socket.connect_timeout(&remote, options.timeout)?;
-    Ok(socket)
+    Ok(super::connecting::connect(
+        socket,
+        &remote,
+        options.timeout,
+        cancelled,
+    )?)
 }
 
 pub(super) fn listen(local: BluetoothAddress, channel: u8) -> Result<Socket, PlatformError> {

@@ -187,7 +187,7 @@ jobs:
       - name: Build Windows USB preparation helpers
         if: inputs.package && runner.os == 'Windows'
         shell: bash
-        run: RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --locked --target "$BUILD_TARGET" -p carplay-platform --example usb_probe --example usb_mode --example usb_runtime_check
+        run: RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --locked --target "$BUILD_TARGET" -p carplay-platform --example usb_probe --example usb_mode --example usb_runtime_check --example usb_driver_verify
       - name: Prepare bundled Windows USB user-mode libraries
         if: inputs.package && runner.os == 'Windows'
         shell: pwsh

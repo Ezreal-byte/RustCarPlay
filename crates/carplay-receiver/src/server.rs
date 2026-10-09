@@ -54,11 +54,25 @@ pub enum ReceiverEvent {
     Verified,
     StreamStarted(u16),
     FirstVideoFrame(u16),
+    FirstAudioPacket(u16),
+    BluetoothHandoffRequested,
+    IapTunnelReady,
+    /// Fixed protocol summaries only; never record request bodies or credentials.
+    Diagnostic(String),
     Disconnected,
     UiRequested(String),
-    IapMessage { message_id: u16, body: Vec<u8> },
-    UnsupportedIapSession { session_id: u8, bytes: usize },
-    IapArtwork { id: u8, data: Vec<u8> },
+    IapMessage {
+        message_id: u16,
+        body: Vec<u8>,
+    },
+    UnsupportedIapSession {
+        session_id: u8,
+        bytes: usize,
+    },
+    IapArtwork {
+        id: u8,
+        data: Vec<u8>,
+    },
     Error(String),
 }
 
@@ -71,6 +85,10 @@ impl std::fmt::Debug for ReceiverEvent {
             Self::Verified => f.write_str("Verified"),
             Self::StreamStarted(kind) => f.debug_tuple("StreamStarted").field(kind).finish(),
             Self::FirstVideoFrame(kind) => f.debug_tuple("FirstVideoFrame").field(kind).finish(),
+            Self::FirstAudioPacket(kind) => f.debug_tuple("FirstAudioPacket").field(kind).finish(),
+            Self::BluetoothHandoffRequested => f.write_str("BluetoothHandoffRequested"),
+            Self::IapTunnelReady => f.write_str("IapTunnelReady"),
+            Self::Diagnostic(message) => f.debug_tuple("Diagnostic").field(message).finish(),
             Self::Disconnected => f.write_str("Disconnected"),
             Self::UiRequested(_) => f.write_str("UiRequested([redacted])"),
             Self::IapMessage { message_id, body } => f
@@ -592,6 +610,15 @@ fn connection(mut socket: TcpStream, peer: SocketAddr, ctx: ContextState<'_>) ->
                     }
                 }
                 ("GET" | "POST", "/info") => {
+                    event(
+                        &ctx.events,
+                        ReceiverEvent::Diagnostic(format!(
+                            "AirPlay info audio_output={} microphone={} hevc={}",
+                            ctx.options.config.audio_output,
+                            ctx.options.config.microphone,
+                            ctx.options.config.hevc
+                        )),
+                    );
                     let mut declaration = info::build(
                         &ctx.options.config,
                         &ctx.options.bluetooth_address,
@@ -620,6 +647,18 @@ fn connection(mut socket: TcpStream, peer: SocketAddr, ctx: ContextState<'_>) ->
                                     events_writer.clone(),
                                 )?;
                                 status = result;
+                                for stream in
+                                    streams.iter().take(16).filter_map(Value::as_dictionary)
+                                {
+                                    event(
+                                        &ctx.events,
+                                        ReceiverEvent::Diagnostic(format!(
+                                            "AirPlay SETUP stream={:?} audio_format={:?} status={status}",
+                                            info::get_number(stream, "type"),
+                                            info::get_number(stream, "audioFormat")
+                                        )),
+                                    );
+                                }
                                 if status == 200 {
                                     body = info::encode(&dict([("streams", array(replies))]))?;
                                 }
@@ -642,10 +681,25 @@ fn connection(mut socket: TcpStream, peer: SocketAddr, ctx: ContextState<'_>) ->
                                     ctx.events.clone(),
                                 )?;
                                 event_open = true;
+                                event(
+                                    &ctx.events,
+                                    ReceiverEvent::Diagnostic(format!(
+                                        "AirPlay session hevc={} iap_channel={} second_screen={}",
+                                        ctx.options.config.hevc,
+                                        ctx.iap.is_some(),
+                                        ctx.options.config.second_screen
+                                    )),
+                                );
                                 body = info::encode(&dict([
                                     ("timingPort", number(timing_port.into())),
                                     ("eventPort", number(event_port.into())),
-                                    ("enabledFeatures", array([text("viewAreas")])),
+                                    (
+                                        "enabledFeatures",
+                                        info::enabled_features(
+                                            &ctx.options.config,
+                                            ctx.iap.is_some(),
+                                        ),
+                                    ),
                                 ]))?;
                             } else {
                                 status = 455;
@@ -667,6 +721,15 @@ fn connection(mut socket: TcpStream, peer: SocketAddr, ctx: ContextState<'_>) ->
                     status = handle_command(&request.body, &ctx.events);
                 }
                 _ => status = 404,
+            }
+            if status >= 400 {
+                event(
+                    &ctx.events,
+                    ReceiverEvent::Diagnostic(format!(
+                        "AirPlay control method={} status={status}",
+                        diagnostic_identifier(&request.method)
+                    )),
+                );
             }
             let response = rtsp::response(&request, status, kind, &body);
             socket.write_all(&if let Some(w) = writer.as_mut() {
@@ -886,6 +949,7 @@ fn setup_streams(
                         let Some(stream) = accept(listener, peer, &cancel)? else {
                             return Ok(());
                         };
+                        let mut tunnel_ready_announced = false;
                         crate::tunnel::run(
                             stream,
                             key,
@@ -917,6 +981,15 @@ fn setup_streams(
                                 }
                             },
                             |message| {
+                                // The tunnel forwards this only after validating
+                                // identification, certificate and challenge response.
+                                if !tunnel_ready_announced
+                                    && message.message_id
+                                        == carplay_protocol::tlv::AUTHENTICATION_SUCCEEDED
+                                {
+                                    event(&events, ReceiverEvent::IapTunnelReady);
+                                    tunnel_ready_announced = true;
+                                }
                                 events
                                     .try_send(ReceiverEvent::IapMessage {
                                         message_id: message.message_id,
@@ -1011,6 +1084,19 @@ fn teardown_types(body: &[u8]) -> Result<Option<Vec<u16>>> {
     Ok(if kinds.is_empty() { None } else { Some(kinds) })
 }
 
+fn diagnostic_identifier(value: &str) -> &str {
+    if !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        value
+    } else {
+        "[redacted]"
+    }
+}
+
 fn handle_command(body: &[u8], events: &SyncSender<ReceiverEvent>) -> u16 {
     let Ok(Value::Dictionary(command)) = Value::from_reader(std::io::Cursor::new(body)) else {
         return 400;
@@ -1031,7 +1117,37 @@ fn handle_command(body: &[u8], events: &SyncSender<ReceiverEvent>) -> u16 {
                 Err(_) => 503,
             }
         }
-        Some(_) => 501,
+        Some(command)
+            if command.eq_ignore_ascii_case("disableBluetooth")
+                || command.eq_ignore_ascii_case("disable-bluetooth") =>
+        {
+            // Acknowledge the request without disabling the host Bluetooth
+            // adapter. The app may close only its RFCOMM bootstrap after the
+            // authenticated iAP tunnel is ready in this same session.
+            match events.try_send(ReceiverEvent::BluetoothHandoffRequested) {
+                Ok(()) => 200,
+                Err(_) => 503,
+            }
+        }
+        Some("modesChanged") => {
+            // This reports the phone's resource owners; it is not a request
+            // to switch a local device. DiPlay acknowledges it even with no UI.
+            event(
+                events,
+                ReceiverEvent::Diagnostic("AirPlay modesChanged acknowledged".into()),
+            );
+            200
+        }
+        Some(command) => {
+            event(
+                events,
+                ReceiverEvent::Diagnostic(format!(
+                    "AirPlay command unsupported: {}",
+                    diagnostic_identifier(command)
+                )),
+            );
+            501
+        }
         None => 400,
     }
 }
@@ -1131,6 +1247,10 @@ fn screen(
                     }
                     1 => {
                         let (codec, data) = media::codec_config(&body)?;
+                        event(&events, ReceiverEvent::Diagnostic(format!(
+                            "screen {kind} config codec={codec:?} payload_bytes={} record_bytes={}",
+                            body.len(), data.len()
+                        )));
                         sink.send(MediaEvent::VideoConfig {
                             stream: kind,
                             codec,
@@ -1187,6 +1307,7 @@ fn audio(
         let _control = control;
         let mut buffer = [0u8; 65536];
         let mut replay = media::ReplayWindow::default();
+        let mut first_packet = true;
         let mut capture: Option<Box<dyn media::CaptureSession>> = None;
         while !cancel.load(Ordering::Acquire) {
             let (n, remote) = match data.recv_from(&mut buffer) {
@@ -1225,6 +1346,12 @@ fn audio(
             };
             if payload.is_empty() || !replay.accept(counter) {
                 continue;
+            }
+            if first_packet {
+                if let Some(events) = events.as_ref() {
+                    event(events, ReceiverEvent::FirstAudioPacket(kind));
+                }
+                first_packet = false;
             }
             if let Some(pending) = microphone.take() {
                 match pending.start() {
@@ -1414,6 +1541,23 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn diagnostic_identifiers_do_not_log_arbitrary_request_values() {
+        assert_eq!(diagnostic_identifier("SETUP"), "SETUP");
+        assert_eq!(
+            diagnostic_identifier("disableBluetooth"),
+            "disableBluetooth"
+        );
+        for value in [
+            "",
+            "https://example.test/private?token=secret",
+            "one\ntwo",
+            "name with spaces",
+        ] {
+            assert_eq!(diagnostic_identifier(value), "[redacted]");
+        }
+        assert_eq!(diagnostic_identifier(&"a".repeat(65)), "[redacted]");
+    }
     struct NoAuth;
     impl AuthProvider for NoAuth {
         fn protocol_major(&self) -> u8 {

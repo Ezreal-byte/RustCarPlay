@@ -23,6 +23,8 @@ fn desktop(ctx: &egui::Context) -> Desktop {
         hotspot_password: zeroize::Zeroizing::new(String::new()),
         hotspot_status: None,
         usb_device: String::new(),
+        #[cfg(target_os = "windows")]
+        usb_resume: None,
         startup_cancel: None,
         auth_dir: String::new(),
         status: String::new(),
@@ -33,10 +35,12 @@ fn desktop(ctx: &egui::Context) -> Desktop {
         connection: None,
         closing: None,
         texture: None,
+        render_state: None,
         last_frame: None,
         navigation: Navigation::default(),
         logo,
         diagnostics_open: false,
+        vehicle_open: false,
         night: false,
         fullscreen: false,
         suppress_touch: false,
@@ -62,6 +66,114 @@ fn frame(pts_ns: u64) -> Arc<RgbaFrame> {
 
 fn receiver(app: &mut Desktop, event: ReceiverEvent) {
     app.handle_event(AppEvent::Receiver(event));
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn preparation_progress_keeps_worker_channel_until_final_result() {
+    let ctx = egui::Context::default();
+    let mut app = desktop(&ctx);
+    let (tx, rx) = mpsc::channel();
+    app.job = Some(rx);
+    tx.send(JobResult::UsbProgress("checking".into())).unwrap();
+    tx.send(JobResult::UsbProgress("activating".into()))
+        .unwrap();
+    app.poll(&ctx);
+    assert_eq!(app.status, "checking");
+    assert!(app.job.is_some());
+    app.poll(&ctx);
+    assert_eq!(app.status, "activating");
+    assert!(app.job.is_some());
+    // Use an in-memory terminal result to avoid real device enumeration.
+    tx.send(JobResult::Diagnostics("finished".into())).unwrap();
+    app.poll(&ctx);
+    assert!(app.job.is_none());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn usb_preparation_gates_connection_even_after_device_refresh() {
+    use carplay_platform::usb::{Readiness, UsbPhone};
+    let ctx = egui::Context::default();
+    let mut app = desktop(&ctx);
+    app.mode = ConnectionMode::Usb;
+    app.usb_device = "port-a".into();
+    app.hosts = Some(HostChoices {
+        adapters: vec![],
+        peers: vec![],
+        addresses: vec![],
+        wifi: None,
+        wifi_address: None,
+        usb: Ok(vec![UsbPhone {
+            id: "port-a".into(),
+            windows_device_token: None,
+            name: "iPhone".into(),
+            product_id: 0,
+            active_configuration: None,
+            configuration: None,
+            readiness: Readiness::ModeSwitchRequired,
+        }]),
+    });
+    for readiness in [
+        Readiness::ModeSwitchRequired,
+        Readiness::DriverSetupRequired("inactive".into()),
+    ] {
+        app.hosts.as_mut().unwrap().usb.as_mut().unwrap()[0].readiness = readiness;
+        assert!(app.usb_connection_blocker().is_some());
+        app.start();
+        assert!(
+            app.pending.is_none(),
+            "must not switch phone mode while preparation is incomplete"
+        );
+    }
+    app.hosts.as_mut().unwrap().usb.as_mut().unwrap()[0].readiness = Readiness::InterfacesAvailable;
+    app.usb_resume = Some("port-a".into());
+    assert!(app.usb_connection_blocker().is_some());
+    app.usb_resume = None;
+    assert!(app.usb_connection_blocker().is_none());
+    app.usb_resume = Some("port-a".into());
+    app.mode = ConnectionMode::Lan;
+    assert!(
+        app.usb_connection_blocker().is_none(),
+        "USB preparation does not block LAN"
+    );
+}
+
+#[test]
+fn oem_tile_opens_placeholder_without_losing_video_or_reopening_player() {
+    let ctx = egui::Context::default();
+    let mut app = desktop(&ctx);
+    receiver(&mut app, ReceiverEvent::TcpAccepted);
+    receiver(&mut app, ReceiverEvent::Verified);
+    app.display_frame(&ctx, frame(1));
+    receiver(&mut app, ReceiverEvent::UiRequested("vehicle:".into()));
+    assert!(app.vehicle_open);
+    assert_eq!(app.navigation.page(), Page::Home);
+    assert!(app.texture.is_some());
+    app.display_frame(&ctx, frame(2));
+    assert_eq!(app.navigation.page(), Page::Home);
+    receiver(&mut app, ReceiverEvent::Disconnected);
+    assert!(!app.vehicle_open);
+}
+
+#[test]
+fn malformed_decoded_frame_does_not_replace_last_valid_texture() {
+    let ctx = egui::Context::default();
+    let mut app = desktop(&ctx);
+    receiver(&mut app, ReceiverEvent::Verified);
+    app.display_frame(&ctx, frame(1));
+    let previous = app.last_frame.clone().unwrap();
+    app.display_frame(
+        &ctx,
+        Arc::new(RgbaFrame {
+            width: u32::MAX,
+            height: u32::MAX,
+            rgba: vec![],
+            pts_ns: None,
+        }),
+    );
+    assert!(Arc::ptr_eq(app.last_frame.as_ref().unwrap(), &previous));
+    assert!(app.texture.is_some());
 }
 
 fn select_wireless_devices(app: &mut Desktop) {

@@ -4,19 +4,23 @@
 
 A Rust CarPlay receiver based on [DiPlay](https://github.com/shihabal3amri/DiPlay). Shared Rust code implements the protocols and sessions, native adapters connect to each operating system, **egui / wgpu** provides the desktop UI, and **GStreamer** handles media.
 
-**v0.1.1 provides desktop installer previews: Windows Setup, macOS DMG and Ubuntu DEB.** Media runtimes and fixed experimental authentication material are included; portable archives remain available. Windows development builds have been tested with one iPhone over wireless and USB; the release workflow checks extracted application startup and installer layout. Full DiPlay feature parity and long-running stability remain unfinished.
+**The current source version is v0.1.4; desktop artifacts include Windows Setup, macOS DMG and Ubuntu DEB previews.** Check Releases for published versions: a commit or passing CI does not create a release. Media runtimes and fixed experimental authentication material are included; portable archives remain available. Windows development builds have been tested with one iPhone over wireless and USB. Full DiPlay feature parity and long-running stability remain unfinished.
 
 [Releases](https://github.com/Ezreal-byte/RustCarPlay/releases) · [Development guide](docs/DEVELOPMENT.md) · [Acceptance record](docs/ACCEPTANCE.md) · [Issues](https://github.com/Ezreal-byte/RustCarPlay/issues)
 
 ## Screenshots
 
-![Placeholder for the RustCarPlay connection and player screens](docs/screenshots/placeholder.svg)
+![Windows connection and settings home](docs/screenshots/connection-home.png)
 
-*This is a labeled placeholder, not a device screenshot. See the [screenshot contribution guide](docs/screenshots/README.md).*
+Connection settings offer LAN, USB and computer hotspot modes, resolution presets and a default of 60 fps.
+
+![Windows CarPlay player displaying maps and music](docs/screenshots/carplay-player.png)
+
+Actual Windows screenshots supplied by the user on 2026-10-09. The player reports 1920×1080; these images alone do not establish delivered frame rate, audio, connection mode or support on another platform. See the [screenshot notes](docs/screenshots/README.md).
 
 ## Platform status
 
-| Platform | v0.1.1 scope and status |
+| Platform | Current implementation scope and status |
 | --- | --- |
 | Windows 11 x64 | One iPhone tested: wireless/USB video, touch and audio; USB pause and reconnect also passed an initial user test |
 | Linux x64 / ARM64 | Ubuntu 24.04 / glibc 2.39 baseline; USB, BlueZ and NetworkManager backends implemented, with no physical-device acceptance yet |
@@ -47,7 +51,7 @@ Download the installer matching your OS and architecture from [Releases](https:/
 
 Ordinary launch needs no separately installed development tools or GStreamer, and no manual certificate path. Installed applications keep personal settings, pairings and logs in user data directories; uninstalling preserves that data. See the [exact locations](docs/DEVELOPMENT.md#installation-and-personal-data). For portable use, extract the whole ZIP/TAR into a writable directory and run its root `RustCarPlay.exe` or `./RustCarPlay`.
 
-Start with LAN on Windows: join the same Wi-Fi on the computer and iPhone, pair Bluetooth in system settings, then connect without an in-app Wi-Fi password. USB additionally needs Apple Mobile Device Service, trust/permissions and [device configuration](docs/WINDOWS_USB_DRIVER.md); its preparation scripts require PowerShell 7 and SDK signature tools and are not run by the installer. Linux connections require system BlueZ, NetworkManager, usbmuxd and suitable permissions.
+Start with LAN on Windows: join the same Wi-Fi on the computer and iPhone, pair Bluetooth in system settings, then connect without an in-app Wi-Fi password. USB additionally needs Apple Mobile Device Service, trust/permissions and [device configuration](docs/WINDOWS_USB_DRIVER.md). In v0.1.4, Prepare Windows USB reports actual stages and saves replug checkpoints; PowerShell 5.1 and 7 are supported. Preparation requests administrator privileges, which Windows may approve silently. Standard packages include signature verification; reusing some legacy drivers still requires SDK verification tools. Linux connections require system BlueZ, NetworkManager, usbmuxd and suitable permissions.
 
 The bundled experimental identity comes from the fixed **DiPlay v0.2.15 preview APK**, attributed upstream to **public Carlinkit firmware**. It is not newly issued and is not covered by the source-code GPL license. Public download availability does not establish redistribution permission; distribution suitability and continued acceptance by future iOS releases remain unresolved. The archive includes `resources/auth/provenance.json`; private keys are excluded from Git and source archives. See [third-party notices](docs/THIRD_PARTY_NOTICES.md).
 

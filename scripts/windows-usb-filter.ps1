@@ -3,13 +3,16 @@
 param(
     [ValidateSet('Verify', 'Install', 'Restore')][string]$Action = 'Verify',
     [string]$DeviceToken,
-    [string]$StateDirectory = (Join-Path $PSScriptRoot '../.local/windows-usb'),
-    [string]$PackageDirectory = (Join-Path $PSScriptRoot '../.local/downloads/libusb-win32-verified'),
+    [string]$StateDirectory,
+    [string]$PackageDirectory,
     [string]$SignTool,
     [switch]$UseExistingFilter
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-usb-paths.ps1')
+$StateDirectory = Resolve-RustCarPlayUsbStateDirectory $StateDirectory
+if (-not $PackageDirectory) { $PackageDirectory = Join-Path $StateDirectory 'packages/libusb-win32-verified' }
 $filterAction = $Action
 $filterToken = $DeviceToken
 $filterStateDirectory = [IO.Path]::GetFullPath($StateDirectory)
@@ -18,8 +21,18 @@ $Action = $filterAction
 $DeviceToken = $filterToken
 $StateDirectory = $filterStateDirectory
 
+function Invoke-UsbDriverVerify($Package, [string]$Member, [string]$Catalog) {
+    if ($Package.NativeVerifier) {
+        $arguments = @('--embedded', $Member)
+        if ($Catalog) { $arguments = @('--catalog', $Catalog, $Member) }
+        $output = & $Package.NativeVerifier @arguments 2>&1
+    } elseif ($Catalog) { $output = & $Package.SignTool verify /kp /c $Catalog $Member 2>&1 }
+    else { $output = & $Package.SignTool verify /kp $Member 2>&1 }
+    if ($LASTEXITCODE -ne 0) { throw 'Kernel signing policy or catalog membership verification failed; nothing was installed.' }
+}
+
 function Get-UsbFilterPackage {
-    if (-not $IsWindows -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
+    if (-not (Test-RustCarPlayWindows) -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
         throw 'The reviewed filter installation path currently supports Windows x64 only.'
     }
     $directory = [IO.Path]::GetFullPath($PackageDirectory)
@@ -57,12 +70,16 @@ function Get-UsbFilterPackage {
             Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName)
         if ($candidates.Count) { $tool = $candidates[0] }
     }
-    if (-not $tool -or -not (Test-Path -LiteralPath $tool)) {
-        throw 'Windows SDK signtool is required to verify kernel signing policy and catalog membership. Pass -SignTool explicitly if needed.'
+    $packageRoot = Split-Path -Parent $PSScriptRoot
+    $verifier = Join-Path $packageRoot 'tools/usb_driver_verify.exe'
+    if (-not [IO.File]::Exists($verifier)) { $verifier = Join-Path $packageRoot 'target/debug/examples/usb_driver_verify.exe' }
+    if (-not [IO.File]::Exists($verifier)) { $verifier = $null }
+    if (-not $verifier -and (-not $tool -or -not (Test-Path -LiteralPath $tool))) {
+        throw 'The USB driver verification helper is missing. Reinstall the complete application; source builds may use Windows SDK signtool.'
     }
-    $result = & $tool verify /kp /c $cat $sys 2>&1
-    if ($LASTEXITCODE -ne 0) { throw 'Kernel signing policy or catalog membership verification failed; nothing was installed.' }
-    @{ Root=$root; Sys=$sys; Cat=$cat; Exe=$exe; SignTool=$tool; SysHash=(Get-FileHash -LiteralPath $sys -Algorithm SHA256).Hash }
+    $package = @{ Root=$root; Sys=$sys; Cat=$cat; Exe=$exe; SignTool=$tool; NativeVerifier=$verifier; SysHash=(Get-FileHash -LiteralPath $sys -Algorithm SHA256).Hash }
+    Invoke-UsbDriverVerify $package $sys $cat
+    $package
 }
 
 function Assert-UsbFilterBackup($Record, [string]$Token) {
@@ -98,8 +115,15 @@ function Get-VerifiedExistingUsbFilter($Package) {
     if ($signature.Status -ne 'Valid') { throw 'The existing filter Authenticode signature is not valid.' }
     # No /a: verify its embedded kernel signature directly, without selecting
     # an unrelated older self-signed device catalog already on the machine.
-    $output = & $Package.SignTool verify /kp $destination 2>&1
-    if ($LASTEXITCODE -ne 0) { throw 'The existing filter did not pass kernel signing policy verification.' }
+    if ($knownLegacy) {
+        # The explicitly supported old cross-signed 1.2.6 driver needs the
+        # SDK's legacy /kp path. Never accept ordinary Authenticode as a fallback.
+        if (-not $Package.SignTool -or -not [IO.File]::Exists($Package.SignTool)) {
+            throw 'Reusing the existing legacy 1.2.6 USB filter requires SDK signtool kernel-policy verification; the shared driver was not changed.'
+        }
+        $output = & $Package.SignTool verify /kp $destination 2>&1
+        if ($LASTEXITCODE -ne 0) { throw 'The existing filter did not pass kernel signing policy verification.' }
+    } else { Invoke-UsbDriverVerify $Package $destination $Package.Cat }
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\libusb0')
     if ($null -eq $key) { throw 'The existing libusb0 service is missing.' }
     try {
@@ -114,12 +138,42 @@ function Get-VerifiedExistingUsbFilter($Package) {
     @{ Hash=$hash; Version=$version; ImagePath=$image; Legacy=$knownLegacy; ServiceState=$state }
 }
 
+function Test-UsbFilterFreshRetry($Record, [bool]$FileExists, [bool]$ServiceExists) {
+    # Only a fully restored, project-owned failed installation with neither
+    # global component present may be treated as a fresh install. One missing
+    # component or an external/shared receipt still requires explicit review.
+    $Record -and $Record.ContainsKey('Detached') -and $Record.Detached -eq $true -and
+        $Record.OwnFile -eq $true -and $Record.OwnService -eq $true -and
+        -not $FileExists -and -not $ServiceExists
+}
+
 function Invoke-UsbFilter {
     if ($Action -eq 'Verify') {
         $package = Get-UsbFilterPackage
-        $result = @{ archive_sha256_verified=$true; microsoft_signature_verified=$true; kernel_catalog_membership_verified=$true; installed=$false; runtime_directory=(Join-Path $package.Root 'bin/amd64') }
-        if ($UseExistingFilter) {
+        $result = @{ archive_sha256_verified=$true; microsoft_signature_verified=$true; kernel_catalog_membership_verified=$true; installed=$false; runtime_directory=(Join-Path $package.Root 'bin/amd64'); reuse_existing_filter=[bool]$UseExistingFilter }
+        $saved = $null
+        if ($DeviceToken) {
+            if ($DeviceToken -cnotmatch '^winusb-[0-9A-F]{16}$') { throw 'Invalid device_token.' }
+            $savedPath = Join-Path $StateDirectory ($DeviceToken + '.filter.json')
+            if ([IO.File]::Exists($savedPath)) {
+                if ((Get-Item -LiteralPath $savedPath).Length -gt 1048576) { throw 'Filter restore record is too large.' }
+                $saved = Get-Content -LiteralPath $savedPath -Raw -Encoding utf8 | ConvertFrom-RustCarPlayJson
+                Assert-UsbFilterBackup $saved $DeviceToken
+                $result.reuse_existing_filter = $UseExistingFilter -or -not $saved.OwnFile -or -not $saved.OwnService
+            }
+        }
+        $freshRetry = $false
+        if ($saved -and -not $UseExistingFilter) {
+            $driverExists = [IO.File]::Exists((Join-Path $env:SystemRoot 'System32/drivers/libusb0.sys'))
+            $service = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\libusb0')
+            try { $freshRetry = Test-UsbFilterFreshRetry $saved $driverExists ($null -ne $service) }
+            finally { if ($null -ne $service) { $service.Dispose() } }
+        }
+        if (($UseExistingFilter -or $saved) -and -not $freshRetry) {
             $existing = Get-VerifiedExistingUsbFilter $package
+            if ($saved -and $existing.Hash -cne $saved.SysHash) {
+                throw 'The installed USB filter differs from the saved restore record; no shared driver was changed.'
+            }
             $result.existing_driver_verified = $true
             $result.existing_driver_version = $existing.Version
             $result.existing_driver_control_only = $existing.Legacy
@@ -129,7 +183,7 @@ function Invoke-UsbFilter {
     }
     $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'Install/Restore requires an administrator PowerShell 7 terminal. Verify is available without elevation.'
+        throw 'Install/Restore requires an administrator PowerShell terminal. Verify is available without elevation.'
     }
     $parents = @(Get-UsbParents)
     if (-not $DeviceToken) {
@@ -147,7 +201,7 @@ function Invoke-UsbFilter {
             $previous = $null
             if ([IO.File]::Exists($path)) {
                 if ((Get-Item -LiteralPath $path).Length -gt 1048576) { throw 'Filter restore record is too large.' }
-                $previous = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable
+                $previous = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-RustCarPlayJson
                 Assert-UsbFilterBackup $previous $DeviceToken
                 if (-not $previous.Contains('Detached') -or -not $previous.Detached) {
                     throw 'An active or partial installation record already exists. Restore it before another install.'
@@ -208,8 +262,16 @@ function Invoke-UsbFilter {
             if (-not $external) {
                 $localCatalog = Join-Path $StateDirectory $catalogName
                 [IO.File]::Copy($package.Cat, $localCatalog, $false)
-                $output = & $package.SignTool catdb /u $localCatalog 2>&1
-                if ($LASTEXITCODE -ne 0) { throw 'Registering the verified Microsoft driver catalog failed; no filter was attached.' }
+                if ($package.NativeVerifier) {
+                    $output = & $package.NativeVerifier --add-catalog $localCatalog 2>&1
+                    if ($LASTEXITCODE -ne 0) { throw 'Registering the verified Microsoft driver catalog failed; no filter was attached.' }
+                    $registration = ($output -join "`n") | ConvertFrom-Json
+                    $record.CatalogName = $registration.catalog_name
+                    Save-UsbBackup $path $record $false
+                } else {
+                    $output = & $package.SignTool catdb /u $localCatalog 2>&1
+                    if ($LASTEXITCODE -ne 0) { throw 'Registering the verified Microsoft driver catalog failed; no filter was attached.' }
+                }
             }
             if (-not $reuseFile) { [IO.File]::Copy($package.Sys, $destination, $false) }
             # Upstream --device-id matches the full instance. --device matches
@@ -241,7 +303,7 @@ function Invoke-UsbFilter {
             @{ action='Install'; device_token=$DeviceToken; device_restarted=$true; installed=$true; restore_record_saved=$true; reused_existing_driver=($null -ne $external); global_driver_modified=($null -eq $external -and -not $reuseService) } | ConvertTo-Json -Compress
         } else {
             if (-not [IO.File]::Exists($path) -or (Get-Item -LiteralPath $path).Length -gt 1048576) { throw 'A bounded filter restore record is required.' }
-            $record = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable
+            $record = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-RustCarPlayJson
             Assert-UsbFilterBackup $record $DeviceToken
             $paths = Get-UsbPaths $record.Instance
             $actual = Get-UsbRegistryState $paths.Parent 'UpperFilters'

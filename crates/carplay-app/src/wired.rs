@@ -168,6 +168,8 @@ impl Connection {
             cancel,
             live,
             proof: FrameProof::default(),
+            handoff: BootstrapHandoff::default(),
+            release_bootstrap: Arc::new(AtomicBool::new(false)),
             hotspot: None,
         })
     }

@@ -22,6 +22,7 @@ const MAX_STREAMS: usize = 8;
 #[derive(Default)]
 struct Shared {
     frames: RwLock<BTreeMap<u16, Arc<RgbaFrame>>>,
+    frame_ready: RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
     errors: Mutex<VecDeque<PlaybackError>>,
     failure: Mutex<Option<String>>,
     queued_bytes: AtomicUsize,
@@ -56,6 +57,13 @@ pub(crate) struct Backend {
 }
 
 impl Backend {
+    pub(crate) fn set_frame_ready_callback(&self, callback: Arc<dyn Fn() + Send + Sync>) {
+        *self
+            .shared
+            .frame_ready
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(callback);
+    }
     pub(crate) fn new() -> Result<Self, Error> {
         gst::init().map_err(|error| Error::Initialization(error.to_string()))?;
         // All requested codecs are checked when their stream starts; don't
@@ -367,6 +375,14 @@ fn video_pipeline(
                             .write()
                             .unwrap_or_else(|e| e.into_inner())
                             .insert(stream, Arc::new(frame));
+                        let callback = shared
+                            .frame_ready
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
+                        if let Some(callback) = callback {
+                            callback();
+                        }
                         Ok(gst::FlowSuccess::Ok)
                     }
                     Err(error) => {
@@ -821,6 +837,20 @@ mod tests {
             .get::<gst::Buffer>("codec_data")
             .unwrap();
         let config = config.map_readable().unwrap().as_slice().to_vec();
+        // Exercise the actual screen-description boundary as well as decode.
+        // A following metadata box must never become part of codec_data.
+        let mut description = ((config.len() + 8) as u32).to_be_bytes().to_vec();
+        description.extend_from_slice(match codec {
+            VideoCodec::H264 => b"avcC",
+            VideoCodec::H265 => b"hvcC",
+        });
+        description.extend_from_slice(&config);
+        description.extend_from_slice(&8u32.to_be_bytes());
+        description.extend_from_slice(b"free");
+        let (detected, extracted) = carplay_core::media::codec_config(&description).unwrap();
+        assert_eq!(detected, codec);
+        assert_eq!(extracted, config);
+        let config = extracted;
         let mut packets = Vec::new();
         for sample in samples {
             let raw = sample.buffer().unwrap().map_readable().unwrap();

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pub mod info;
 mod microphone;
+mod oem;
 pub mod server;
 pub mod storage;
 mod tunnel;

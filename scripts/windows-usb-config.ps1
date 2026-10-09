@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# PowerShell 7. Inspect is read-only. Other actions never install drivers or restart devices.
+# Windows PowerShell 5.1 / PowerShell 7. Inspect is read-only.
 [CmdletBinding()]
 param(
     [ValidateSet('Inspect', 'Prepare', 'Arm', 'Disarm', 'Restore')]
@@ -7,15 +7,17 @@ param(
     [string]$DeviceToken,
     [string]$DescriptorReport,
     [switch]$DetachAppleLowerFilter,
-    [string]$StateDirectory = (Join-Path $PSScriptRoot '../.local/windows-usb')
+    [string]$StateDirectory
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-usb-paths.ps1')
+$StateDirectory = Resolve-RustCarPlayUsbStateDirectory $StateDirectory
 
 function Get-UsbToken([string]$Instance) {
-    $digest = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Instance.ToUpperInvariant()))
-    'winusb-' + [Convert]::ToHexString($digest).Substring(0, 16)
+    $digest = Get-RustCarPlaySha256Hex ([Text.Encoding]::UTF8.GetBytes($Instance.ToUpperInvariant()))
+    'winusb-' + $digest.Substring(0, 16)
 }
 
 function Assert-UsbInstance([string]$Instance) {
@@ -139,11 +141,11 @@ function Save-UsbBackup([string]$Path, $Backup, [bool]$Create) {
     $bytes = [Text.Encoding]::UTF8.GetBytes(($Backup | ConvertTo-Json -Depth 10))
     if ($Create) {
         $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-        try { $stream.Write($bytes); $stream.Flush($true) } finally { $stream.Dispose() }
+        try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
     } else {
         $temp = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
         [IO.File]::WriteAllBytes($temp, $bytes)
-        try { [IO.File]::Move($temp, $Path, $true) }
+        try { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
         finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
     }
 }
@@ -179,7 +181,7 @@ function Get-UsbDescriptorTarget([string]$Path, [int]$ProductId, [string]$Token)
     if (-not $Path -or (Get-Item -LiteralPath $Path).Length -gt 1048576) {
         throw 'Arm requires a small JSON descriptor report produced by usb_probe.'
     }
-    $phones = @(Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable)
+    $phones = @(Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-RustCarPlayJson)
     if ($phones.Count -ne 1 -or [int]$phones[0].product_id -ne $ProductId -or
         -not $phones[0].Contains('windows_device_token') -or $phones[0].windows_device_token -cne $Token) {
         throw 'The descriptor report must contain exactly the selected USB iPhone.'
@@ -198,7 +200,7 @@ function Get-UsbDescriptorTarget([string]$Path, [int]$ProductId, [string]$Token)
 }
 
 function Invoke-UsbConfig {
-    if (-not $IsWindows) { throw 'This script requires Windows and PowerShell 7.' }
+    if (-not (Test-RustCarPlayWindows)) { throw 'This script requires Windows.' }
     $parents = @(Get-UsbParents)
     if ($Action -eq 'Inspect') {
         $rows = foreach ($parent in $parents) {
@@ -221,7 +223,7 @@ function Invoke-UsbConfig {
     }
     $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'This action requires an administrator PowerShell 7 terminal. Inspect is available without elevation.'
+        throw 'This action requires an administrator PowerShell terminal. Inspect is available without elevation.'
     }
     if (-not $DeviceToken) {
         if ($parents.Count -ne 1) { throw 'Select exactly one device_token returned by Inspect.' }
@@ -237,7 +239,7 @@ function Invoke-UsbConfig {
         if (-not $locked) { throw 'Another USB configuration transaction is running for this device.' }
         if ([IO.File]::Exists($path)) {
             if ((Get-Item -LiteralPath $path).Length -gt 1048576) { throw 'USB restore record is too large.' }
-            $backup = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable
+            $backup = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-RustCarPlayJson
             Assert-UsbBackup $backup $DeviceToken
             $paths = Get-UsbPaths $backup.Instance
             if ($paths.Driver -cne $backup.Driver) { throw 'The USB parent driver instance changed; manual restore review is required.' }

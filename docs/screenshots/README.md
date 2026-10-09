@@ -1,8 +1,8 @@
 # 截图位置 / Screenshot slots
 
-根目录的中英 README 暂共用 [`placeholder.svg`](placeholder.svg)。它是本项目绘制的占位示意，不是真机截图，不表示额外功能已经完成。
+根目录中英 README 使用用户于 2026-10-09 提供并要求公开展示的两张 Windows 实际截图：[`connection-home.png`](connection-home.png) 与 [`carplay-player.png`](carplay-player.png)。原始截图未经重新绘制；画面页显示 1920×1080，连接模式和准确二进制版本不能仅凭截图确定。
 
-Root READMEs currently share [`placeholder.svg`](placeholder.svg), an original labeled placeholder, not a real screenshot or evidence of additional implemented features.
+The root READMEs use two actual Windows screenshots supplied for publication by the user on 2026-10-09. They have not been redrawn. The player reports 1920×1080; the connection mode and exact binary version are not established by the images alone. The old `placeholder.svg` is retained only as a historical placeholder.
 
 | 建议文件 / Suggested file | 内容 / Content |
 | --- | --- |
