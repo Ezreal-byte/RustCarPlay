@@ -1,0 +1,172 @@
+name: Rust and native media
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      package:
+        description: Build and upload release archives after testing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+jobs:
+  default:
+    name: Default / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install Rust and checks
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libgl1-mesa-dev
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: default-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Release packaging tests
+        run: python -m unittest discover -s scripts -p test_package_release.py
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Workspace tests
+        run: cargo test --workspace --locked
+
+  native:
+    name: GStreamer / ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            label: windows-x86_64
+            smoke: true
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x86_64
+            smoke: true
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            label: linux-aarch64
+            smoke: false
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            label: macos-x86_64
+            smoke: false
+          - os: macos-15
+            target: aarch64-apple-darwin
+            label: macos-aarch64
+            smoke: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
+    env:
+      BUILD_TARGET: ${{ matrix.target }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install Rust and checks
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustup target add "$BUILD_TARGET"
+      - name: Install Linux GStreamer SDK, codecs and desktop libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libgl1-mesa-dev
+      - name: Prepare official Windows GStreamer SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci-gstreamer-windows.ps1
+      - name: Install official universal macOS GStreamer SDK
+        if: runner.os == 'macOS'
+        run: bash scripts/ci-gstreamer-macos.sh
+      - name: Verify native decoders
+        run: python scripts/check-gstreamer.py
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: native-gst1.28.7-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+      - name: Clippy with native media
+        shell: bash
+        run: cargo clippy --workspace --all-features --all-targets --target "$BUILD_TARGET" --locked -- -D warnings
+      - name: Test workspace with native media
+        shell: bash
+        run: cargo test --workspace --all-features --target "$BUILD_TARGET" --locked
+      - name: Generated video/audio decoding and synthetic microphone smoke tests
+        if: matrix.smoke
+        shell: bash
+        # Headless appsinks and audiotestsrc: no display, microphone or iPhone.
+        run: |
+          python scripts/check-gstreamer.py --encoders
+          cargo test -p carplay-media --features gstreamer --target "$BUILD_TARGET" --locked -- --ignored
+      - name: Build desktop and CLI release executables
+        if: inputs.package
+        shell: bash
+        run: cargo build --release --locked --target "$BUILD_TARGET" -p carplay-desktop -p carplay-cli --features gstreamer
+      - name: Build Windows USB preparation helpers
+        if: inputs.package && runner.os == 'Windows'
+        shell: bash
+        run: cargo build --release --locked --target "$BUILD_TARGET" -p carplay-platform --example usb_probe --example usb_mode --example usb_runtime_check
+      - name: Package executables and notices without native runtimes
+        if: inputs.package
+        shell: bash
+        run: python scripts/package-release.py binary --tag "$RELEASE_TAG" --target "$BUILD_TARGET"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: inputs.package
+        with:
+          name: release-${{ matrix.label }}
+          path: dist/RustCarPlay-*-${{ matrix.label }}.*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

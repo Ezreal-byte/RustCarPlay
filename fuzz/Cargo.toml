@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[package]
+name = "carplay-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "GPL-3.0-only"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+resolver = "2"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+carplay-protocol = { path = "../crates/carplay-protocol" }
+carplay-core = { path = "../crates/carplay-core" }
+carplay-media = { path = "../crates/carplay-media", default-features = false }
+
+[[bin]]
+name = "iap2"
+path = "fuzz_targets/iap2.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tlv"
+path = "fuzz_targets/tlv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "usbmux"
+path = "fuzz_targets/usbmux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ncm"
+path = "fuzz_targets/ncm.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rtsp"
+path = "fuzz_targets/rtsp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "media_framing"
+path = "fuzz_targets/media_framing.rs"
+test = false
+doc = false
+bench = false

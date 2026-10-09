@@ -1,0 +1,21 @@
+[package]
+name = "carplay-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+gstreamer = ["carplay-app/gstreamer"]
+
+[dependencies]
+carplay-media = { path = "../../crates/carplay-media" }
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland"] }
+wgpu = { version = "27", default-features = false, features = ["std", "parking_lot", "dx12", "vulkan", "gles", "metal", "wgsl"] }
+carplay-app = { path = "../../crates/carplay-app" }
+carplay-core = { path = "../../crates/carplay-core" }
+carplay-auth = { path = "../../crates/carplay-auth" }
+carplay-platform = { path = "../../crates/carplay-platform" }
+carplay-receiver = { path = "../../crates/carplay-receiver" }
+serde_json.workspace = true
+zeroize = "1.8"

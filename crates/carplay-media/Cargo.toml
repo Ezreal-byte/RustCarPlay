@@ -1,0 +1,17 @@
+[package]
+name = "carplay-media"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Bounded native GStreamer playback for CarPlay media"
+
+[features]
+default = []
+gstreamer = ["dep:gst", "dep:gst-app", "dep:gst-video"]
+
+[dependencies]
+carplay-core = { path = "../carplay-core" }
+thiserror = "2"
+gst = { package = "gstreamer", version = "0.24", features = ["v1_20"], optional = true }
+gst-app = { package = "gstreamer-app", version = "0.24", features = ["v1_20"], optional = true }
+gst-video = { package = "gstreamer-video", version = "0.24", features = ["v1_20"], optional = true }

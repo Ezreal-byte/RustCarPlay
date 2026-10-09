@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[package]
+name = "carplay-wireless"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Accessory-side wireless iAP2 bootstrap coordinator"
+
+[dependencies]
+carplay-protocol = { path = "../carplay-protocol" }
+carplay-auth = { path = "../carplay-auth" }
+carplay-platform = { path = "../carplay-platform" }
+thiserror = "2"
+zeroize = "1"

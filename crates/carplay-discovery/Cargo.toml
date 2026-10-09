@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[package]
+name = "carplay-discovery"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Selected-iPhone CarPlay Bonjour control discovery and bounded connect probe"
+
+[dependencies]
+mdns-sd = "0.17"
+socket2 = "0.6"
+thiserror = "2"

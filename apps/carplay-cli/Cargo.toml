@@ -1,0 +1,27 @@
+[package]
+name = "carplay-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+gstreamer = ["carplay-app/gstreamer", "carplay-media/gstreamer"]
+
+[[bin]]
+name = "rustcarplay"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+carplay-core = { path = "../../crates/carplay-core" }
+carplay-auth = { path = "../../crates/carplay-auth" }
+carplay-platform = { path = "../../crates/carplay-platform" }
+carplay-protocol = { path = "../../crates/carplay-protocol" }
+carplay-app = { path = "../../crates/carplay-app" }
+carplay-receiver = { path = "../../crates/carplay-receiver" }
+carplay-media = { path = "../../crates/carplay-media" }
+ctrlc = "3.4"
+zeroize = "1.8"

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="530" viewBox="0 0 1200 530" role="img" aria-labelledby="title description">
+  <title id="title">RustCarPlay — screenshot placeholders</title>
+  <desc id="description">Two labeled empty screenshot slots for the connection home and CarPlay player. This is not a screenshot of the application.</desc>
+  <rect width="1200" height="530" rx="24" fill="#10191b"/>
+  <g font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+    <text x="48" y="66" font-size="28" font-weight="700" fill="#f1f7f4">RustCarPlay</text>
+    <text x="1152" y="63" text-anchor="end" font-size="15" fill="#7bd8a0">v0.1.0 preview</text>
+    <text x="48" y="104" font-size="17" fill="#a6b8af">SCREENSHOT SLOTS · Screenshots will be added after a privacy review.</text>
+    <g fill="#172326" stroke="#476157" stroke-width="1.5" stroke-dasharray="8 6">
+      <rect x="48" y="142" width="538" height="300" rx="16"/>
+      <rect x="614" y="142" width="538" height="300" rx="16"/>
+    </g>
+    <g fill="none" stroke="#7bd8a0" stroke-width="2.5">
+      <rect x="293" y="209" width="48" height="36" rx="6"/>
+      <path d="M300 219h34M300 228h20M300 237h28"/>
+      <rect x="855" y="206" width="56" height="40" rx="6"/>
+      <path d="m877 216 14 10-14 10z"/>
+    </g>
+    <g text-anchor="middle">
+      <text x="317" y="294" font-size="22" font-weight="600" fill="#f1f7f4">Connection &amp; settings</text>
+      <text x="883" y="294" font-size="22" font-weight="600" fill="#f1f7f4">CarPlay player</text>
+      <text x="317" y="332" font-size="16" fill="#a6b8af">Placeholder · Not a real screenshot</text>
+      <text x="883" y="332" font-size="16" fill="#a6b8af">Placeholder · Not a real screenshot</text>
+    </g>
+    <text x="48" y="486" font-size="15" fill="#a6b8af">See docs/screenshots/README.md for contribution instructions.</text>
+  </g>
+</svg>

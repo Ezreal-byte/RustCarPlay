@@ -1,0 +1,28 @@
+[package]
+name = "carplay-receiver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+gstreamer-capture-tests = ["carplay-media/gstreamer"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+plist.workspace = true
+carplay-core = { path = "../carplay-core" }
+carplay-auth = { path = "../carplay-auth" }
+carplay-protocol = { path = "../carplay-protocol" }
+carplay-wireless = { path = "../carplay-wireless" }
+mdns-sd = "0.17"
+uuid = { version = "1", features = ["v4"] }
+zeroize = "1.8"
+tempfile = "3"
+
+[dev-dependencies]
+carplay-media = { path = "../carplay-media" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Memory"] }

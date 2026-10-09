@@ -1,0 +1,23 @@
+[package]
+name = "carplay-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+gstreamer = ["carplay-media/gstreamer"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+carplay-core = { path = "../carplay-core" }
+carplay-discovery = { path = "../carplay-discovery" }
+carplay-auth = { path = "../carplay-auth" }
+carplay-platform = { path = "../carplay-platform" }
+carplay-protocol = { path = "../carplay-protocol" }
+carplay-wireless = { path = "../carplay-wireless" }
+carplay-receiver = { path = "../carplay-receiver" }
+carplay-media = { path = "../carplay-media" }
+zeroize = "1.8"
