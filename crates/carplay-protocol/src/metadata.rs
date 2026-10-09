@@ -272,7 +272,9 @@ impl Reader {
                     }
                     let indices = p
                         .value
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|p| u16::from_be_bytes([p[0], p[1]]))
                         .collect();
                     assign(&mut update.current_maneuver_indices, indices)?;

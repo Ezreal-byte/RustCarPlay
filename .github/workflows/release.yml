@@ -53,8 +53,7 @@ jobs:
           python-version: '3.12'
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup show
       - name: Archive tracked source and complete locked Rust dependency sources
         env:
           RELEASE_TAG: ${{ github.ref_name }}

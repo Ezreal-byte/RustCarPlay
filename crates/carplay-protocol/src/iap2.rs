@@ -165,7 +165,9 @@ impl Synchronization {
             max_retransmissions: bytes[8],
             max_acknowledgements: bytes[9],
             sessions: bytes[10..]
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|b| SessionDescriptor {
                     id: b[0],
                     kind: b[1],

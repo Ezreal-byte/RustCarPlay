@@ -45,8 +45,7 @@ jobs:
       - name: Install Rust and checks
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
+          rustup show
       - name: Install Linux desktop build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -58,7 +57,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: default-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          key: default-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - name: Formatting
         run: cargo fmt --all --check
       - name: Release packaging tests
@@ -109,8 +108,7 @@ jobs:
       - name: Install Rust and checks
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
+          rustup show
           rustup target add "$BUILD_TARGET"
       - name: Install Linux GStreamer SDK, codecs and desktop libraries
         if: runner.os == 'Linux'
@@ -136,7 +134,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: native-gst1.28.7-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          key: native-gst1.28.7-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - name: Clippy with native media
         shell: bash
         run: cargo clippy --workspace --all-features --all-targets --target "$BUILD_TARGET" --locked -- -D warnings

@@ -2,6 +2,8 @@
 
 `ci.yml` runs on branch pushes, pull requests, manual dispatch, and reusable-workflow calls. Windows Server 2022 and Ubuntu 24.04 run formatting, packaging tests, default-feature Clippy and workspace tests.
 
+`rust-toolchain.toml` pins the compiler, formatter and Clippy version for both local development and CI. Upgrade that file explicitly when adopting a newer Rust release.
+
 The native GStreamer matrix uses Windows x64, Ubuntu 24.04 x64/ARM64, and macOS 15 Intel/Apple Silicon. Each target checks native codecs, runs Clippy and links/runs workspace tests. Windows and Linux x64 additionally run the ignored synthetic media tests. Those tests use software decoding, appsink and audiotestsrc; they do not open speakers, microphones or connect an iPhone.
 
 The Windows SDK is prepared from verified official GStreamer native archives. macOS uses pinned universal framework packages. Linux uses distro packages. These native runtimes are build dependencies; they are not included in release archives.

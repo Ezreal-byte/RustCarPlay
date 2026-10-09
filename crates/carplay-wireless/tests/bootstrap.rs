@@ -534,7 +534,9 @@ fn bootstrap_declares_all_source_start_stop_pairs() {
     let parameters = identity.parameters().unwrap();
     let messages = &parameters.iter().find(|p| p.id == 6).unwrap().value;
     let declared: Vec<_> = messages
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
         .collect();
     assert_eq!(

@@ -345,7 +345,9 @@ mod tests {
                 .unwrap();
             assert_eq!(packet.len(), 640);
             let samples = packet
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|b| i16::from_be_bytes([b[0], b[1]]))
                 .collect::<Vec<_>>();
             assert!(samples.iter().any(|&s| s != 0));

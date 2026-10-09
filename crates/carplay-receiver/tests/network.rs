@@ -1064,7 +1064,9 @@ fn native_generated_pcm_and_opus_reach_encrypted_udp_uplink() {
             if bits == 0x10 {
                 assert_eq!(body.len(), 640);
                 let samples: Vec<_> = body
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|b| i16::from_be_bytes([b[0], b[1]]))
                     .collect();
                 assert!(samples.iter().any(|&sample| sample != 0));
