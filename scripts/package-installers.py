@@ -238,7 +238,8 @@ def linux_deb(package: Path, temporary: Path, version: str, target: str, output:
     architecture = linux_tree(package, tree, version, target)
     destination = output / f"rustcarplay_{version}_{architecture}.deb"
     run(["dpkg-deb", "--root-owner-group", "--build", tree, destination], timeout=600)
-    inspect_deb(destination, target)
+    if inspect_deb(destination, target) != version:
+        raise RuntimeError("DEB control version does not match the packaged release")
     return destination
 
 
@@ -299,11 +300,14 @@ def validate_installed(root: Path, target: str, temporary: Path) -> Path:
     return data
 
 
-def inspect_deb(archive: Path, target: str) -> None:
+def inspect_deb(archive: Path, target: str) -> str:
     fields = dict(line.split(": ", 1) for line in run(["dpkg-deb", "--field", archive]).splitlines() if ": " in line and not line.startswith(" "))
     architecture = "amd64" if target.startswith("x86_64") else "arm64"
     if fields.get("Package") != "rustcarplay" or fields.get("Architecture") != architecture:
         raise RuntimeError("DEB control metadata has the wrong package or architecture")
+    version = fields.get("Version", "")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
+        raise RuntimeError("DEB has an invalid release version")
     for required in ("bluez", "network-manager", "usbmuxd", "libc6 (>= 2.39)"):
         if required not in fields.get("Depends", "").split(", "):
             raise RuntimeError("DEB is missing a required system dependency")
@@ -315,6 +319,8 @@ def inspect_deb(archive: Path, target: str) -> None:
             for member in payload:
                 if member.uid != 0 or member.gid != 0:
                     raise RuntimeError("DEB payload ownership is not root:root")
+                if member.isdir() and member.mode != 0o755:
+                    raise RuntimeError("DEB directories must be traversable by ordinary users")
                 if member.isfile() and member.mode not in (0o644, 0o755):
                     raise RuntimeError("DEB files must be readable by ordinary users and not writable by other users")
                 name = member.name.removeprefix("./")
@@ -324,6 +330,7 @@ def inspect_deb(archive: Path, target: str) -> None:
                     public_identity.add(Path(name).name)
             if public_identity != {"identity.pk8", "certificate.p7b", "provenance.json"}:
                 raise RuntimeError("DEB is missing the public release identity resources")
+    return version
 
 
 def verify(archive: Path, target: str) -> None:
@@ -369,13 +376,15 @@ def verify(archive: Path, target: str) -> None:
             finally:
                 run(["/usr/bin/hdiutil", "detach", mount], timeout=120)
         else:
-            inspect_deb(archive, target)
+            version = inspect_deb(archive, target)
             extracted = temporary / "deb payload"
             run(["dpkg-deb", "--extract", archive, extracted], timeout=120)
             if (extracted / "usr/bin/rustcarplay").read_text(encoding="utf-8") != (ROOT / "packaging/linux/rustcarplay").read_text(encoding="utf-8"):
                 raise RuntimeError("DEB command wrapper differs from the reviewed launcher")
             for name in ("usr/share/applications/rustcarplay.desktop", "usr/share/icons/hicolor/192x192/apps/rustcarplay.png"):
                 portable.require_file(extracted, name)
+            if portable.read_json(extracted / "opt/rustcarplay/INSTALLATION.json").get("version") != version:
+                raise RuntimeError("DEB control and installed application versions differ")
             validate_installed(extracted / "opt/rustcarplay", target, temporary)
     print("Installer layout, isolated application launch and personal-data preservation checks passed.")
 

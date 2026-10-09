@@ -5,6 +5,7 @@ The original archives, their hashes, and their exact URLs travel with the releas
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -26,6 +27,8 @@ CERBERO_NAME = f"cerbero-{GST_VERSION}.tar.xz"
 CERBERO_URL = f"https://gstreamer.freedesktop.org/data/pkg/src/{GST_VERSION}/{CERBERO_NAME}"
 CERBERO_SHA256 = "6c502458f3e0cc1dea824879875b8939c890242091449405513ab7b8904494e5"
 VC_LICENSE_URL = "https://visualstudio.microsoft.com/wp-content/uploads/2021/09/Visual-C-Runtime-2015-2022-License-1.docx"
+MAX_SOURCE_WINDOW = 512 * 1024 * 1024
+MAX_SOURCE_TAR = 4 * 1024 * 1024 * 1024
 
 
 def sha256(path: Path) -> str:
@@ -50,6 +53,10 @@ def download(url: str, destination: Path, expected: str | None = None) -> Path:
         try:
             with urllib.request.urlopen(url, timeout=120) as response, partial.open("wb") as stream:
                 shutil.copyfileobj(response, stream, length=1024 * 1024)
+                length = response.headers.get("Content-Length")
+                if length is not None and stream.tell() != int(length):
+                    raise OSError(f"Incomplete native source download: {destination.name}; "
+                                  f"expected {length} bytes, received {stream.tell()}")
             break
         except (OSError, urllib.error.URLError):
             if attempt == 2:
@@ -58,6 +65,7 @@ def download(url: str, destination: Path, expected: str | None = None) -> Path:
     if expected is not None and sha256(partial) != expected:
         raise RuntimeError(f"Source digest mismatch: {destination.name}")
     partial.replace(destination)
+    print(f"Downloaded {destination.name}: {destination.stat().st_size} bytes, SHA256 {sha256(destination)}", flush=True)
     return destination
 
 
@@ -160,26 +168,85 @@ def microsoft_license(cache: Path, destination: Path) -> dict:
             "redistribution_terms": "https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files"}
 
 
+@contextmanager
+def source_tar(path: Path):
+    """Read allsource without depending on the shell's tar/zstd executables.
+
+    MSYS2 publishes frames with 128 MiB windows. Decode to bounded temporary
+    storage before inspecting members so truncated frames cannot look complete
+    merely because tar encountered its end markers before the missing footer.
+    """
+    if path.suffix != ".zst":
+        with tarfile.open(path, "r:*") as archive:
+            yield archive
+        return
+    try:
+        import zstandard
+    except ImportError as error:
+        raise RuntimeError("Native source packaging needs the build-only dependency: "
+                           "python -m pip install zstandard==0.25.0") from error
+    if zstandard.__version__ != "0.25.0":
+        raise RuntimeError("Native source packaging requires zstandard==0.25.0")
+    with path.open("rb") as compressed, tempfile.TemporaryFile() as expanded:
+        try:
+            parameters = zstandard.get_frame_parameters(compressed.read(18))
+            if parameters.window_size > MAX_SOURCE_WINDOW:
+                raise RuntimeError("Zstandard source window exceeds 512 MiB")
+            compressed.seek(0)
+            decoder = zstandard.ZstdDecompressor(max_window_size=MAX_SOURCE_WINDOW).decompressobj()
+            # Small input chunks also bound each temporary decompression result
+            # for highly compressible sources; the complete tar stays on disk.
+            while chunk := compressed.read(1024):
+                data = decoder.decompress(chunk)
+                if expanded.tell() + len(data) > MAX_SOURCE_TAR:
+                    raise RuntimeError("Expanded source tar exceeds 4 GiB")
+                expanded.write(data)
+                if decoder.eof:
+                    if decoder.unused_data or compressed.read(1):
+                        raise RuntimeError("Unexpected trailing data after Zstandard source frame")
+                    break
+            if not decoder.eof:
+                raise RuntimeError("Incomplete Zstandard source frame")
+        except (zstandard.ZstdError, RuntimeError) as error:
+            raise RuntimeError(f"Invalid native source {path.name}: {path.stat().st_size} bytes, "
+                               f"SHA256 {sha256(path)}; {error}") from error
+        expanded.seek(0)
+        with tarfile.open(fileobj=expanded, mode="r:") as archive:
+            yield archive
+
+
 def validate_msys_allsource(path: Path) -> dict:
+    print(f"Validating {path.name}: {path.stat().st_size} bytes, SHA256 {sha256(path)}", flush=True)
+    with source_tar(path) as archive:
+        return validate_msys_members(archive, path.name)
+
+
+def validate_msys_members(archive: tarfile.TarFile, filename: str) -> dict:
     """Accept complete upstream tarballs or a complete pinned bare Git source.
 
     winpthreads uses a Git source in makepkg. Inspect objects only, ignoring the
     downloaded repository's config and hooks, and never execute PKGBUILD.
     """
-    listing = subprocess.check_output(["tar", "-tf", str(path)], text=True).splitlines()
-    recipes = [name for name in listing if name.endswith("/PKGBUILD")]
+    members = archive.getmembers()
+    listing = [member.name.rstrip("/") for member in members]
+    if len(listing) != len(set(listing)):
+        raise RuntimeError(f"Duplicate paths in MSYS2 source: {filename}")
+    regular = {member.name: member for member in members if member.isfile()}
+    recipes = [name for name in regular if name.endswith("/PKGBUILD")]
     if len(recipes) != 1:
-        raise RuntimeError(f"MSYS2 source has no unique build recipe: {path.name}")
-    archives = [name for name in listing if name.endswith((".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".zip"))]
+        raise RuntimeError(f"MSYS2 source has no unique build recipe: {filename}")
+    archives = [name for name in regular if name.endswith((".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".zip"))]
     if archives:
         return {"upstream_archives": archives}
     srcinfo = recipes[0].rsplit("/", 1)[0] + "/.SRCINFO"
-    metadata = subprocess.check_output(["tar", "-xOf", str(path), srcinfo], text=True)
+    if srcinfo not in regular or regular[srcinfo].size > 1024 * 1024:
+        raise RuntimeError(f"MSYS2 source has no complete upstream archive or pinned Git source: {filename}")
+    metadata = archive.extractfile(regular[srcinfo]).read().decode("utf-8")
     commits = set(re.findall(r"#commit=([0-9a-f]{40})", metadata))
-    repositories = [name.removesuffix("/HEAD") for name in listing if name.endswith("/HEAD")
-                    and name.removesuffix("HEAD") + "objects/" in listing]
+    repositories = [name.removesuffix("/HEAD") for name in regular if name.endswith("/HEAD")
+                    and name.removesuffix("HEAD") + "objects" in listing]
     if len(commits) != 1 or len(repositories) != 1:
-        raise RuntimeError(f"MSYS2 package has no complete upstream archive or pinned Git source: {path.name}")
+        raise RuntimeError(f"MSYS2 package has no complete upstream archive or pinned Git source: {filename}")
     repository, commit = repositories[0], commits.pop()
     with tempfile.TemporaryDirectory(prefix="rustcarplay-source-git-") as temporary:
         target = Path(temporary)
@@ -187,8 +254,8 @@ def validate_msys_allsource(path: Path) -> dict:
         (target / "HEAD").write_text(commit + "\n", encoding="ascii")
         (target / "refs").mkdir()
         (target / "objects").mkdir()
-        for name in listing:
-            if not name.startswith(repository + "/objects/") or name.endswith("/"):
+        for name, member in regular.items():
+            if not name.startswith(repository + "/objects/"):
                 continue
             relative = PurePosixPath(name.removeprefix(repository + "/"))
             if any(part in ("..", ".") for part in relative.parts) or relative.is_absolute():
@@ -198,7 +265,7 @@ def validate_msys_allsource(path: Path) -> dict:
             destination = target.joinpath(*relative.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             with destination.open("wb") as output:
-                subprocess.run(["tar", "-xOf", str(path), name], stdout=output, check=True)
+                shutil.copyfileobj(archive.extractfile(member), output)
         # git archive walks every referenced tree and blob; a recipes-only,
         # shallow/missing-object, or wrong-commit archive therefore fails.
         subprocess.run(["git", "--no-replace-objects", "--git-dir=" + temporary,
@@ -239,26 +306,78 @@ def usb_sources(manifest: dict, cache: Path, output: Path, version: str,
             "source_archives": list(files.values())}
 
 
+def dsc_control_fields(text: str) -> dict[str, str]:
+    """Read only the Deb822 stanza, excluding OpenPGP armor metadata.
+
+    APT authenticates the source descriptor during acquisition. This parser
+    does not verify a PGP signature; it prevents its Version header (present
+    in older GnuPG signatures such as Ubuntu's db5.3 source) from replacing
+    the actual source package version.
+    """
+    lines = text.splitlines()
+    if lines and lines[0] == "-----BEGIN PGP SIGNED MESSAGE-----":
+        try:
+            start = lines.index("") + 1
+            signature = lines.index("-----BEGIN PGP SIGNATURE-----", start)
+            end = lines.index("-----END PGP SIGNATURE-----", signature + 1)
+        except ValueError as error:
+            raise RuntimeError("Malformed clear-signed Debian source descriptor") from error
+        if any(line.strip() for line in lines[end + 1:]):
+            raise RuntimeError("Unexpected content after Debian source signature")
+        # RFC 4880 cleartext signatures dash-escape lines beginning with '-'.
+        lines = [line[2:] if line.startswith("- ") else line for line in lines[start:signature]]
+    fields = {}
+    current = None
+    ended = False
+    for line in lines:
+        if not line.strip():
+            ended = bool(fields)
+            continue
+        if ended:
+            raise RuntimeError("Debian source descriptor must contain one control stanza")
+        if line.startswith((" ", "\t")):
+            if current is None:
+                raise RuntimeError("Unexpected Debian source field continuation")
+            fields[current] += "\n" + line
+            continue
+        match = re.fullmatch(r"([A-Za-z][A-Za-z0-9-]*):[ \t]*(.*)", line)
+        if match is None:
+            raise RuntimeError("Malformed Debian source control field")
+        current = match[1].lower()
+        if current in fields:
+            raise RuntimeError("Duplicate Debian source control field: " + current)
+        fields[current] = match[2].strip()
+    return fields
+
+
 def dsc_artifacts(directory: Path, source: tuple[str, str] | None = None) -> list[Path]:
     descriptors = list(directory.glob("*.dsc"))
     if len(descriptors) != 1:
         raise RuntimeError(f"Expected exactly one Debian source descriptor in {directory.name}")
     descriptor = descriptors[0]
-    text = descriptor.read_text(encoding="utf-8")
+    fields = dsc_control_fields(descriptor.read_text(encoding="utf-8"))
     if source is not None:
-        fields = dict(re.findall(r"^(Source|Version): (.+)$", text, re.MULTILINE))
-        if (fields.get("Source"), fields.get("Version")) != source:
-            raise RuntimeError("Debian source descriptor does not match the installed binary's exact source version")
-    match = re.search(r"^Checksums-Sha256:\n((?: [^\n]+\n)+)", text, re.MULTILINE)
-    if match is None:
+        actual = (fields.get("source"), fields.get("version"))
+        if actual != source:
+            raise RuntimeError("Debian source descriptor does not match the installed binary's exact source version: "
+                               + f"expected {source[0]}={source[1]}, got {actual[0]}={actual[1]}")
+    checksums = fields.get("checksums-sha256", "")
+    entries = [line.split() for line in checksums.splitlines() if line.strip()]
+    if not entries:
         raise RuntimeError("Debian .dsc has no SHA-256 source file list")
     result = [descriptor]
-    for line in match.group(1).splitlines():
-        digest, size, name = line.split()
+    names = set()
+    for entry in entries:
+        if len(entry) != 3 or not re.fullmatch(r"[0-9a-fA-F]{64}", entry[0]) or not entry[1].isdigit():
+            raise RuntimeError("Invalid Debian source SHA-256 file record")
+        digest, size, name = entry
         if Path(name).name != name or "/" in name or "\\" in name:
             raise RuntimeError("Invalid Debian source filename")
+        if name in names:
+            raise RuntimeError("Duplicate Debian source filename: " + name)
+        names.add(name)
         path = directory / name
-        if not path.is_file() or path.stat().st_size != int(size) or sha256(path) != digest:
+        if not path.is_file() or path.stat().st_size != int(size) or sha256(path) != digest.lower():
             raise RuntimeError(f"Missing or corrupt corresponding source: {name}")
         result.append(path)
     return result

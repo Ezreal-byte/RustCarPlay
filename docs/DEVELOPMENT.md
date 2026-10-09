@@ -151,6 +151,8 @@ cargo test --workspace --locked
 
 GStreamer feature 的编译/测试需要上述 native 环境；不能用 `DOCS_RS=1` 替代 native 链接或解码验收。Android Kotlin/JNI、HarmonyOS ArkTS/NAPI、BYD 适配器尚未实现，不从 Rust target 存在推断产品可用。
 
+制作发布包时，还需在构建用 Python 环境执行 `python -m pip install zstandard==0.25.0`，以读取并打包原生依赖的对应源码压缩包。它仅是发布打包依赖，普通 Cargo 编译、安装包用户和应用运行环境均不需要安装此 Python 包。CI 已固定同一版本；发布流程见[工作流说明](../.github/workflows/README.md)。
+
 本项目代码采用 GPL-3.0-only。桌面界面为新实现，未复制 DiAuto AGPL UI 或 BYD 图标素材。绿色 CarPlay 图标为 Apple 原始素材，不适用代码的 GPL 许可，来源见 [第三方声明](THIRD_PARTY_NOTICES.md)。CarPlay 是 Apple 的商标；项目不表示 Apple 认证。
 
 ## English quickstart
@@ -174,6 +176,8 @@ Windows USB preparation backups and recovery records still live in **`.local/win
 Windows USB still needs Apple's mobile-device service, phone trust, permissions and device configuration. The filter preparation script prefers `runtime/usb-driver/libusb-win32-bin-1.4.0.2.zip` before its fixed download source; it retains all hash/signature checks and never runs automatically from the app or installer. PowerShell 7 and SDK signature-verification tools remain prerequisites. The exact filter-driver source is included in the Windows native-source attachment; five added installers bring the complete set to 16 assets. Apple services and Windows UsbNcm are not bundled. Linux packages target Ubuntu 24.04 / glibc 2.39 and include the selected media dependency closure, but still require OS desktop, graphics/audio drivers, BlueZ, NetworkManager, usbmuxd and suitable permissions. Linux device operation remains unverified. macOS 15 packages are non-notarized GUI/core previews without native connection adapters. Android and HarmonyOS are not built in this release.
 
 The commands below are for **building from source** and run from the repository root. Source builds need Rust stable, native toolchains, GStreamer development headers and pkg-config metadata. See the Chinese platform sections above for the full connection and recovery procedure and [v0.1.1 notes](releases/v0.1.1.md) for the package/source asset list.
+
+When producing release packages, run `python -m pip install zstandard==0.25.0` in the build Python environment to read and package corresponding native source archives. This is a release-packaging dependency only: ordinary Cargo compilation does not need this package, and installed application users do not need Python. CI pins the same version; see the [release workflow guide](../.github/workflows/README.md).
 
 ### Building from source on Windows
 

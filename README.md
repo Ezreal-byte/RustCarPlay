@@ -51,7 +51,7 @@ Windows 建议先选局域网模式：电脑与 iPhone 加入同一 Wi-Fi，在�
 
 离线包的实验身份取自固定 **DiPlay v0.2.15 预览 APK**，上游声明来源为 **Carlinkit 公开固件**。它不是新签发身份，不适用项目源码的 GPL 许可；公开可下载不等于获得再分发许可，分发适用性与未来 iOS 接受情况仍未确定。来源记录随包放在 `resources/auth/provenance.json`，私钥不进入 Git 或源码包。详见[第三方声明](docs/THIRD_PARTY_NOTICES.md)。
 
-命令行使用 `RustCarPlay --cli`（Windows 为 `RustCarPlay.exe --cli`）。包结构、源码构建、故障定位和恢复命令见[开发文档](docs/DEVELOPMENT.md)，本轮变化见 [v0.1.1 说明](docs/releases/v0.1.1.md)。
+安装版命令行：Linux 使用 `rustcarplay --cli`；Windows 在安装目录中用 PowerShell 运行 `.\RustCarPlay.exe --cli`；macOS 使用 `/Applications/RustCarPlay.app/Contents/MacOS/RustCarPlay --cli`。便携版从解压目录运行根启动器并添加 `--cli`。包结构、源码构建、故障定位和恢复命令见[开发文档](docs/DEVELOPMENT.md)，本轮变化见 [v0.1.1 说明](docs/releases/v0.1.1.md)。
 
 ## 从源码开发
 

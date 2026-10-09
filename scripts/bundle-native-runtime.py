@@ -461,6 +461,14 @@ def resolve_macho_dependency(dependency: str, image: Path, rpaths: list[str],
     raise RuntimeError(f"Unresolved private Mach-O dependency: {dependency} in {image.name}")
 
 
+def macho_loader_reference(image: Path, dependency: Path) -> str:
+    # Resolve both sides before computing a movable, loader-relative name.
+    # Resolving only the dependency mixes /var with /private/var on macOS,
+    # or RUNNER~1 with runneradmin on Windows test hosts, escaping the bundle.
+    relative = os.path.relpath(dependency.resolve(), image.parent.resolve())
+    return "@loader_path/" + relative.replace(os.sep, "/")
+
+
 def macos_runtime(prefix: Path, runtime: Path, apps: list[Path]) -> list[dict]:
     if platform.system() != "Darwin":
         raise RuntimeError("macOS relocation and code signing require a macOS host")
@@ -494,7 +502,7 @@ def macos_runtime(prefix: Path, runtime: Path, apps: list[Path]) -> list[dict]:
                 system.add(dependency)
             else:
                 local = resolve_macho_dependency(dependency, path, original_rpaths, prefix, destination)
-                relocated = "@loader_path/" + os.path.relpath(local, path.parent).replace(os.sep, "/")
+                relocated = macho_loader_reference(path, local)
                 changes.extend(["-change", dependency, relocated])
         if path.suffix == ".dylib":
             changes.extend(["-id", "@loader_path/" + path.name])

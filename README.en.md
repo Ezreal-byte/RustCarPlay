@@ -51,7 +51,7 @@ Start with LAN on Windows: join the same Wi-Fi on the computer and iPhone, pair 
 
 The bundled experimental identity comes from the fixed **DiPlay v0.2.15 preview APK**, attributed upstream to **public Carlinkit firmware**. It is not newly issued and is not covered by the source-code GPL license. Public download availability does not establish redistribution permission; distribution suitability and continued acceptance by future iOS releases remain unresolved. The archive includes `resources/auth/provenance.json`; private keys are excluded from Git and source archives. See [third-party notices](docs/THIRD_PARTY_NOTICES.md).
 
-Use `RustCarPlay --cli` for the command line (`RustCarPlay.exe --cli` on Windows). Package layout, source builds, troubleshooting and recovery are documented in the [development guide](docs/DEVELOPMENT.md). See the [v0.1.1 notes](docs/releases/v0.1.1.md) for release changes.
+For the installed CLI, use `rustcarplay --cli` on Linux, `.\RustCarPlay.exe --cli` in PowerShell from the installation directory on Windows, or `/Applications/RustCarPlay.app/Contents/MacOS/RustCarPlay --cli` on macOS. For portable builds, run the root launcher from its extraction directory with `--cli`. Package layout, source builds, troubleshooting and recovery are documented in the [development guide](docs/DEVELOPMENT.md). See the [v0.1.1 notes](docs/releases/v0.1.1.md) for release changes.
 
 ## Development
 

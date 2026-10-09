@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import zstandard
 import native_runtime_sources as sources
 
 SPEC = importlib.util.spec_from_file_location("native_bundle", Path(__file__).with_name("bundle-native-runtime.py"))
@@ -184,7 +185,71 @@ class NativeRuntimeTests(unittest.TestCase):
                 self.assertIn(flag, args)
             self.assertNotIn("upgrade", args)
 
-    @unittest.skipUnless(shutil.which("git") and shutil.which("tar"), "Git and tar are needed for bare source verification")
+    @staticmethod
+    def msys_zstd_fixture() -> bytes:
+        original = io.BytesIO()
+        with tarfile.open(fileobj=original, mode="w") as archive:
+            for name, body in (("package/PKGBUILD", b"exit 99 # never execute"),
+                               ("package/upstream.tar.gz", b"fixture upstream source")):
+                member = tarfile.TarInfo(name)
+                member.size = len(body)
+                archive.addfile(member, io.BytesIO(body))
+        parameters = zstandard.ZstdCompressionParameters.from_level(
+            1, write_content_size=0, write_checksum=1)
+        frame = bytearray(zstandard.ZstdCompressor(compression_params=parameters).compress(original.getvalue()))
+        # With no content-size field this is Window_Descriptor. Requiring a
+        # 128 MiB window reproduces the real MSYS2 frame without a huge fixture.
+        frame[5] = 0x88
+        assert zstandard.get_frame_parameters(frame).window_size == 128 * 1024 * 1024
+        return bytes(frame)
+
+    def test_msys_large_window_source_uses_verified_python_decoder(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture.src.tar.zst"
+            path.write_bytes(self.msys_zstd_fixture())
+            with patch.object(sources.subprocess, "check_output") as external:
+                result = sources.validate_msys_allsource(path)
+            self.assertEqual(result, {"upstream_archives": ["package/upstream.tar.gz"]})
+            external.assert_not_called()
+
+    def test_msys_zstd_rejects_incomplete_frame_checksum_and_trailing_data(self):
+        frame = self.msys_zstd_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture.src.tar.zst"
+            for payload, message in ((frame[:-1], "Incomplete Zstandard"),
+                                     (frame[:-1] + bytes([frame[-1] ^ 1]), "checksum"),
+                                     (frame + b"unexpected", "trailing data")):
+                with self.subTest(message=message):
+                    path.write_bytes(payload)
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        sources.validate_msys_allsource(path)
+
+    def test_msys_zstd_bounds_frame_window_and_expanded_disk_usage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture.src.tar.zst"
+            frame = bytearray(self.msys_zstd_fixture())
+            frame[5] = 0xA8  # Advertise 2 GiB, before any allocation is attempted.
+            path.write_bytes(frame)
+            with self.assertRaisesRegex(RuntimeError, "window exceeds"):
+                sources.validate_msys_allsource(path)
+            path.write_bytes(self.msys_zstd_fixture())
+            with patch.object(sources, "MAX_SOURCE_TAR", 1024), self.assertRaisesRegex(RuntimeError, "Expanded source tar exceeds"):
+                sources.validate_msys_allsource(path)
+
+    def test_source_download_never_promotes_truncated_http_response(self):
+        def response(*args, **kwargs):
+            stream = io.BytesIO(b"truncated")
+            stream.headers = {"Content-Length": "1024"}
+            return stream
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "source.tar.zst"
+            with patch.object(sources.urllib.request, "urlopen", side_effect=response) as requests, \
+                 patch.object(sources.time, "sleep"), self.assertRaisesRegex(OSError, "expected 1024 bytes, received 9"):
+                sources.download("https://example.invalid/source.tar.zst", path)
+            self.assertEqual(requests.call_count, 3)
+            self.assertFalse(path.exists())
+
+    @unittest.skipUnless(shutil.which("git"), "Git is needed for bare source verification")
     def test_msys_vcs_source_is_verified_offline_without_running_recipe(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
@@ -351,6 +416,39 @@ Load command 1
             ):
                 with self.subTest(dependency=dependency), self.assertRaisesRegex(RuntimeError, "private Mach-O"):
                     bundle.resolve_macho_dependency(dependency, image, rpaths, prefix, destination)
+
+    def test_macho_loader_reference_normalizes_short_name_and_symlink_aliases(self):
+        # Model the real filesystem canonicalization deterministically on all
+        # hosts: Windows may disable 8.3 names or require symlink privileges.
+        # The hosted Windows integration test also uses its actual TEMP alias.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            resolve = Path.resolve
+            for alias_parts, canonical_parts in (("RUNNER~1/Temp", "runneradmin/Temp"),
+                                                  ("var/folders", "private/var/folders")):
+                alias = root / alias_parts
+                canonical = root / canonical_parts
+                image = alias / "package/runtime/gstreamer/lib/libproxy.1.dylib"
+                dependency = canonical / "package/runtime/gstreamer/lib/libproxy/libpxbackend-1.0.dylib"
+                def normalize(path, *args, **kwargs):
+                    if path.is_relative_to(alias):
+                        path = canonical / path.relative_to(alias)
+                    return resolve(path, *args, **kwargs)
+                with self.subTest(alias=alias_parts), patch.object(Path, "resolve", autospec=True, side_effect=normalize):
+                    result = bundle.macho_loader_reference(image, dependency)
+                self.assertEqual(result, "@loader_path/libproxy/libpxbackend-1.0.dylib")
+                # Changing the installation directory must preserve the name.
+                moved = root / "other-install-location"
+                self.assertEqual(bundle.macho_loader_reference(moved / "runtime/gstreamer/lib/libproxy.1.dylib",
+                    moved / "runtime/gstreamer/lib/libproxy/libpxbackend-1.0.dylib"), result)
+
+    def test_macho_loader_reference_keeps_app_to_private_runtime_path_portable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = root / "package/app/carplay-desktop"
+            dependency = root / "package/runtime/gstreamer/lib/libgstreamer-1.0.dylib"
+            result = bundle.macho_loader_reference(image, dependency)
+            self.assertEqual(result, "@loader_path/../runtime/gstreamer/lib/libgstreamer-1.0.dylib")
 
     def test_macos_relocation_rewrites_nested_libproxy_and_removes_sdk_rpath(self):
         with tempfile.TemporaryDirectory() as temporary:

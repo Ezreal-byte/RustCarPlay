@@ -67,7 +67,9 @@ jobs:
       - name: Formatting
         run: cargo fmt --all --check
       - name: Release packaging tests
-        run: python -m unittest discover -s scripts -p 'test_*.py'
+        run: |
+          python -m pip install --disable-pip-version-check zstandard==0.25.0
+          python -m unittest discover -s scripts -p 'test_*.py'
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Workspace tests
@@ -208,7 +210,9 @@ jobs:
       - name: Package full offline binaries and corresponding native sources
         if: inputs.package
         shell: bash
-        run: python scripts/package-release.py binary --tag "$RELEASE_TAG" --target "$BUILD_TARGET"
+        run: |
+          python -m pip install --disable-pip-version-check zstandard==0.25.0
+          python scripts/package-release.py binary --tag "$RELEASE_TAG" --target "$BUILD_TARGET"
       - name: Verify extracted portable archive without developer runtime paths
         if: inputs.package
         shell: bash
